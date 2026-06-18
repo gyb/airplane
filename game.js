@@ -312,7 +312,8 @@
     keys: {},            // 当前按下的键
     pointerX: W / 2,     // 指针位置（画布坐标，移出画布时可能为负或越界）
     pointerY: H * 0.8,
-    touching: false,     // 是否正在触摸
+    touching: false,     // 是否有"移动指"在控制飞机
+    touchId: null,       // 移动指的 identifier（多点触控：第一指移动，其余指触发动作）
     lastPointer: 0       // 最近一次指针移动时间戳（用于判断指针是否"近期活跃"）
   };
 
@@ -352,30 +353,61 @@
     useBomb(); // 游戏中：鼠标左键任意位置 = 释放炸弹（走位靠鼠标移动，不靠点击）
   });
 
-  // ---- 触摸 ----
+  // ---- 触摸（多点触控）：第一指控制飞机；第二指任意位置落下 = 释放炸弹；亦可单指点右下炸弹按钮 ----
   canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
-    const t = e.touches[0];
-    const p = toCanvasPos(t.clientX, t.clientY);
-    if (state === 'PLAYING' && inBombButton(p.x, p.y)) { useBomb(); return; }
-    input.pointerX = p.x; input.pointerY = p.y;
-    input.touching = true;
-    input.lastPointer = e.timeStamp;
-    if (state !== 'PLAYING') tryStart();
+    if (state !== 'PLAYING') {
+      // 菜单 / 结束：任意触摸开始游戏，并把该指认领为移动指
+      const t = e.changedTouches[0];
+      const p = toCanvasPos(t.clientX, t.clientY);
+      input.touchId = t.identifier;
+      input.pointerX = p.x; input.pointerY = p.y;
+      input.touching = true;
+      input.lastPointer = e.timeStamp;
+      tryStart();
+      return;
+    }
+    // 游戏中：逐个处理新落下的指头
+    for (const t of e.changedTouches) {
+      const p = toCanvasPos(t.clientX, t.clientY);
+      if (inBombButton(p.x, p.y)) {
+        useBomb();                        // 点炸弹按钮
+      } else if (input.touchId !== null) {
+        useBomb();                        // 已有移动指 → 第二指任意位置落下 = 炸弹
+      } else {
+        input.touchId = t.identifier;     // 认领为移动指
+        input.pointerX = p.x; input.pointerY = p.y;
+        input.touching = true;
+        input.lastPointer = e.timeStamp;
+      }
+    }
   }, { passive: false });
 
   canvas.addEventListener('touchmove', (e) => {
     e.preventDefault();
-    const t = e.touches[0];
-    const p = toCanvasPos(t.clientX, t.clientY);
-    input.pointerX = p.x; input.pointerY = p.y;
-    input.lastPointer = e.timeStamp;
+    // 仅移动指更新飞机位置，其他指不影响
+    for (const t of e.touches) {
+      if (t.identifier === input.touchId) {
+        const p = toCanvasPos(t.clientX, t.clientY);
+        input.pointerX = p.x; input.pointerY = p.y;
+        input.lastPointer = e.timeStamp;
+        break;
+      }
+    }
   }, { passive: false });
 
-  canvas.addEventListener('touchend', (e) => {
+  // 仅移动指抬起才停止控制；动作指（炸弹）抬起不影响飞机
+  const endTouch = (e) => {
     e.preventDefault();
-    input.touching = false;
-  }, { passive: false });
+    for (const t of e.changedTouches) {
+      if (t.identifier === input.touchId) {
+        input.touchId = null;
+        input.touching = false;
+      }
+    }
+  };
+  canvas.addEventListener('touchend', endTouch, { passive: false });
+  canvas.addEventListener('touchcancel', endTouch, { passive: false });
 
   // ================= STATE =================
   let state = 'MENU';     // MENU | PLAYING | PAUSED | GAMEOVER
@@ -1320,7 +1352,7 @@
     ctx.fillStyle = '#8aa0c8';
     ctx.font = '14px sans-serif';
     ctx.fillText('方向键 / WASD 移动，或用鼠标 / 触摸跟随', W / 2, H / 2 + 62);
-    ctx.fillText('「P」火力 · 「S」护盾 · 「B」炸弹(鼠标左键/Space/X，触屏点右下按钮)', W / 2, H / 2 + 84);
+    ctx.fillText('「P」火力 · 「S」护盾 · 「B」炸弹(左键/Space/X，触屏双指点按)', W / 2, H / 2 + 84);
     ctx.fillText('M 静音 · P/Esc 暂停', W / 2, H / 2 + 106);
   }
 
