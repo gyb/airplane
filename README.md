@@ -1,6 +1,10 @@
 # 飞机大战 ✈️
 
+[English](README.en.md) | 中文
+
 一款用 **HTML5 Canvas + 原生 JavaScript** 从零实现的竖屏卷轴射击游戏。无框架、无构建步骤、无外部资源依赖——浏览器打开 `index.html` 即可运行。
+
+![游戏截图](docs/screenshot.png)
 
 🎮 在线试玩：<https://gyb.github.io/airplane/>
 
