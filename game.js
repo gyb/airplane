@@ -501,7 +501,7 @@
     }
   }
 
-  // Boss 被击败：大爆炸 + 奖励分 + 掉落多个 P + 安排下一个 Boss
+  // Boss 被击败：大爆炸 + 奖励分 + 掉落 P/S/B 各一个 + 安排下一个 Boss
   function defeatBoss() {
     if (!boss) return;
     SFX.bossExplode();
@@ -511,9 +511,15 @@
     const reward = CONFIG.boss.score + bossLevel * CONFIG.boss.scorePerLevel;
     addScore(reward);
     floatText(boss.x, boss.y - 24, 'BOSS 击破 +' + reward, '#ffe066');
-    for (let k = 0; k < CONFIG.boss.dropCount; k++) {
-      const offset = (k - (CONFIG.boss.dropCount - 1) / 2) * 36;
-      powerups.push(new PowerUp(boss.x + offset, boss.y));
+    // 击败掉落：P / S / B 各一个（左右顺序随机），比清一色火力更有价值
+    const drops = ['power', 'shield', 'bomb'];
+    for (let i = drops.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      [drops[i], drops[j]] = [drops[j], drops[i]];
+    }
+    for (let k = 0; k < drops.length; k++) {
+      const offset = (k - (drops.length - 1) / 2) * 36;
+      powerups.push(new PowerUp(boss.x + offset, boss.y, drops[k]));
     }
     bossLevel++;
     nextBossScore = score + CONFIG.boss.gapScore;
@@ -1166,8 +1172,13 @@
           floatText(p.x, p.y - 10, '护盾!', d.glow);
           SFX.shield();
         } else if (p.type === 'bomb') {
-          player.bombs = Math.min(CONFIG.skills.maxBombs, player.bombs + 1);
-          floatText(p.x, p.y - 10, '炸弹 +1', d.glow);
+          if (player.bombs < CONFIG.skills.maxBombs) {
+            player.bombs++;
+            floatText(p.x, p.y - 10, '炸弹 +1', d.glow);
+          } else {
+            addScore(CONFIG.powerup.bonusScore); // 满库存时转为奖励分（与满级吃 P 一致）
+            floatText(p.x, p.y - 10, '+' + CONFIG.powerup.bonusScore, '#ffe066');
+          }
           SFX.powerup();
         } else { // power
           if (player.power < CONFIG.player.maxPower) {
