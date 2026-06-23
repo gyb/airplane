@@ -423,6 +423,7 @@
   const DIFF = { spawnInterval: CONFIG.enemy.spawnInterval, enemySpeedMul: 1, fireMul: 1 };
   let spawnAcc = 0;
   let lastTime = 0;
+  let pausedAt = 0;       // 进入暂停时的时间戳（用于恢复时平移计时器）
   let flashScreen = 0;    // 炸弹引爆时的全屏闪光强度（0~1）
 
   // 由波次重算难度参数：刷怪更密、敌机更快、开火更频
@@ -483,8 +484,25 @@
 
   // 暂停 / 继续（仅在"游戏中"与"暂停"之间切换）
   function togglePause() {
-    if (state === 'PLAYING') { state = 'PAUSED'; duckBgm(true); }
-    else if (state === 'PAUSED') { state = 'PLAYING'; duckBgm(false); }
+    if (state === 'PLAYING') {
+      state = 'PAUSED';
+      pausedAt = performance.now();
+      duckBgm(true);
+    } else if (state === 'PAUSED') {
+      // 暂停期间真实时间仍在流逝；把所有"绝对时间戳"型计时器整体后移暂停时长，
+      // 使暂停时间不计入火力/护盾衰减、无敌、开火节奏等
+      const shift = performance.now() - pausedAt;
+      if (player) {
+        player.powerDecayAt += shift;
+        player.shieldUntil += shift;
+        player.invincibleUntil += shift;
+        player.lastFire += shift;
+      }
+      for (const e of enemies) if (e.nextFire !== undefined) e.nextFire += shift;
+      if (boss) boss.nextFire += shift;
+      state = 'PLAYING';
+      duckBgm(false);
+    }
   }
 
   // 玩家受击：扣命 + 无敌 + 爆炸，命数归零则结束
@@ -688,8 +706,9 @@
 
       ctx.restore();
 
-      // 护盾泡（世界坐标，覆盖在玩家外圈）
+      // 护盾泡 + 剩余时间条（世界坐标，覆盖在玩家外圈）
       if (time < this.shieldUntil) {
+        const remain = Math.max(0, Math.min(1, (this.shieldUntil - time) / CONFIG.skills.shieldDuration));
         ctx.save();
         ctx.globalAlpha = 0.35 + Math.sin(time / 120) * 0.1;
         ctx.strokeStyle = '#5fffe0';
@@ -697,6 +716,12 @@
         ctx.beginPath(); ctx.arc(this.x, this.y, this.w * 0.85, 0, Math.PI * 2); ctx.stroke();
         ctx.globalAlpha = 1;
         ctx.restore();
+        // 护盾剩余时间条（玩家正上方，随时间缩短，临尽变红）
+        const bw = this.w, bh = 3, bx = this.x - bw / 2, by = this.y - this.h / 2 - 9;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+        ctx.fillStyle = remain > 0.4 ? '#5fffe0' : '#ff5a4a';
+        ctx.fillRect(bx, by, bw * remain, bh);
       }
     }
   }
