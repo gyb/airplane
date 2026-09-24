@@ -32,5 +32,5 @@ node --check game.js
 - **难度曲线**：`wave` 每 18 秒 +1，`recomputeDiff()` 重算刷怪间隔/敌机速度/开火倍率，`pickEnemyType()` 按波次加权选敌机类型。
 - **Boss**：分数达门槛登场（`nextBossScore`，间隔等差递增 `gapScore+(n-1)*gapStep`），在场时暂停普通刷怪与编队队列；三种型号按 bossLevel 轮换（`BOSS_ORDER`/`BOSS_TYPES`：旗舰=定向扇 / 环堡=整圈+螺旋 / 掠袭者=冲刺+沿途撒弹），阶段参数在 `def.phases`，攻击阶段由血量百分比驱动；BGM 经 `setTrack()` 在卡农/Boss 战曲间切换（击败、重开都要切回）。
 - **输入设计原则：走位与放炸弹解耦**——键盘移动 + Space/X 炸弹；鼠标移动即走位、左键任意位置 = 炸弹；触屏第一指 = 移动指（`input.touchId` 认领）、第二指落下 = 炸弹，另有右下角炸弹按钮。指针仅在"近期活跃"（1500ms 内移动过）时才接管走位，避免静止指针吸走飞机。改动输入时不得破坏这一对等与解耦。
-- **音频**：全部 WebAudio 合成（`SFX` 音效 + lookahead 调度的双 BGM 循环）。受浏览器自动播放策略限制，需在用户手势中 `resumeAudio()` 解锁。
+- **音频**：全部 WebAudio 合成（`SFX` 音效 + lookahead 调度的 BGM 循环：卡农 + 每个 Boss 型号一首专属曲，登场时 `setTrack(boss.type)`，型号名即曲目键）。受浏览器自动播放策略限制，需在用户手势中 `resumeAudio()` 解锁。
 - **持久化**：最高分存 localStorage（key `airplane_highscore`），不可用时静默降级。

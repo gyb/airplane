@@ -22,7 +22,7 @@ A vertical-scrolling shoot-'em-up built from scratch with **HTML5 Canvas + vanil
 - **Active skills**: bomb (screen/bullet clear) / shield (6s invulnerability)
 - **Hit feedback**: getting hit triggers screen shake, a red flash, explosion particles and clear floating text, plus a brief mercy shield to recover
 - **Wave-based difficulty curve**: a new wave every 18s — enemies get denser, faster, and heavier
-- **Synthesized SFX + dual BGM**: calm Canon (D major) normally, an original D-minor battle theme during boss fights — all generated with the Web Audio API
+- **Synthesized SFX + four BGM tracks**: calm Canon (D major) normally, plus one theme per boss — the flagship's D-minor march, the ring fortress's heavy dirge, the ramer's E-minor chase — all generated with the Web Audio API
 - **Persistent high score**: saved in `localStorage` with a "new record" callout
 - **Pause / mute**: `P` to pause, `M` to mute
 - **Responsive**: adapts to desktop and mobile with multi-touch support
@@ -119,7 +119,7 @@ All values live in the `CONFIG` object at the top of `game.js` — adjust game f
 - `boss.firstScore` / `gapScore` / `gapStep` — boss threshold and its per-level widening gap
 - `skills.shieldDuration` / `bombDamage` — skill strength
 - `player.hurtShieldDuration` / `hurtShake` — mercy shield duration and hit shake strength
-- `BGM_BPM` / `BOSS_BPM` — music tempo
+- `BGM_BPM` / `FLAG_BPM` / `RING_BPM` / `RAM_BPM` — per-track tempo
 
 Adding content (new enemies, bullet patterns, pickups) is just a new entry in the relevant data table plus a branch where needed.
 

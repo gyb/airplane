@@ -368,31 +368,73 @@
     if (step % 2 === 0) bgmNote(BGM_BASS[(step / 2) % BGM_BASS.length], time, BGM_STEP * 1.9, 'sine', 0.20); // 地面低音
   }
 
-  // ---- Boss 战主题：D 小调，驱动低音 + 紧张旋律 + 底鼓（原创，无版权）----
-  const BOSS_BPM = 140;
-  const BOSS_STEP = 60 / BOSS_BPM / 2; // 8 分音符
+  // ---- Boss 战曲：每型一首专属曲（原创，无版权），型号名即曲目键 ----
+  // 旗舰：D 小调进行曲——驱动低音 + 紧张旋律 + 底鼓（原 Boss 曲）
+  const FLAG_BPM = 140;
+  const FLAG_STEP = 60 / FLAG_BPM / 2; // 8 分音符
   // 驱动低音（Dm-Am-Bb-C 进行，每步一个 8 分音符，断奏）
-  const BOSS_BASS = [
+  const FLAG_BASS = [
     146.83, 146.83, 146.83, 146.83, 110.00, 110.00, 110.00, 110.00,
     116.54, 116.54, 116.54, 116.54, 130.81, 130.81, 130.81, 130.81
   ];
   // 紧张主旋律（用 b6 音 Bb 增添紧张感，0 为休止）
-  const BOSS_MELODY = [
+  const FLAG_MELODY = [
     587.33, 0, 440.00, 587.33, 0, 523.25, 466.16, 0,
     440.00, 0, 466.16, 0, 523.25, 587.33, 0, 0
   ];
-  function scheduleBossStep(step, time) {
-    bgmNote(BOSS_BASS[step % BOSS_BASS.length], time, BOSS_STEP * 0.9, 'sawtooth', 0.13);
-    const m = BOSS_MELODY[step % BOSS_MELODY.length];
-    if (m) bgmNote(m, time, BOSS_STEP * 1.4, 'square', 0.10);
+  function scheduleFlagshipStep(step, time) {
+    bgmNote(FLAG_BASS[step % FLAG_BASS.length], time, FLAG_STEP * 0.9, 'sawtooth', 0.13);
+    const m = FLAG_MELODY[step % FLAG_MELODY.length];
+    if (m) bgmNote(m, time, FLAG_STEP * 1.4, 'square', 0.10);
     if (step % 2 === 0) bgmKick(time); // 每拍底鼓，增强驱动感
     if (step % 2 === 1) bgmHat(time);
   }
 
-  // 曲目切换：Boss 登场切紧张曲，击败后切回卡农
+  // 环堡：D 小调沉重压迫曲——低音级数下行 + 圣咏式慢旋律 + 两拍一记重锤
+  const RING_BPM = 104;
+  const RING_STEP = 60 / RING_BPM / 2;
+  // 低音每 4 步（半小节）换一次：D2 → Bb1 → C2 → A1
+  const RING_BASS = [73.42, 58.27, 65.41, 55.00];
+  // 圣咏式旋律（D4→F4→A4→G4→F4→E4 咏叹下行，0 为休止）
+  const RING_MELODY = [
+    293.66, 0, 0, 349.23, 0, 0, 440.00, 0,
+    392.00, 0, 0, 349.23, 0, 329.63, 0, 0
+  ];
+  function scheduleRingStep(step, time) {
+    bgmNote(RING_BASS[(step >> 2) % RING_BASS.length], time, RING_STEP * 3.8, 'sawtooth', 0.18);
+    const m = RING_MELODY[step % RING_MELODY.length];
+    if (m) bgmNote(m, time, RING_STEP * 2.4, 'triangle', 0.12);
+    if (step % 8 === 0 || step % 8 === 4) bgmKick(time); // 1、3 拍重锤，沉重的步进感
+    if (step % 4 === 2) bgmHat(time);
+  }
+
+  // 掠袭者：E 小调追击曲——168 BPM 八分音符爬升低音 + 神经质断奏旋律 + 密集鼓点
+  const RAM_BPM = 168;
+  const RAM_STEP = 60 / RAM_BPM / 2;
+  // 驱动低音：Em → G → A → B(→D) 爬升，每步一个八分音符
+  const RAM_BASS = [
+    82.41, 82.41, 82.41, 82.41, 98.00, 98.00, 98.00, 98.00,
+    110.00, 110.00, 110.00, 110.00, 123.47, 123.47, 146.83, 123.47
+  ];
+  // 神经质旋律（E5/G5/A5 拉扯，句尾 F5→Eb5 尖刺增添危险感，0 为休止）
+  const RAM_MELODY = [
+    659.26, 0, 783.99, 659.26, 0, 880.00, 0, 783.99,
+    659.26, 0, 783.99, 659.26, 0, 698.46, 0, 622.25
+  ];
+  function scheduleRamerStep(step, time) {
+    bgmNote(RAM_BASS[step % RAM_BASS.length], time, RAM_STEP * 0.85, 'sawtooth', 0.13);
+    const m = RAM_MELODY[step % RAM_MELODY.length];
+    if (m) bgmNote(m, time, RAM_STEP * 0.9, 'square', 0.09);
+    if (step % 2 === 0) bgmKick(time);
+    bgmHat(time); // 每个八分音符都有踩镲，追击的急促感
+  }
+
+  // 曲目切换：Boss 登场切该型号专属曲，击败后切回卡农
   const TRACKS = {
-    canon: { fn: scheduleBgmStep, stepDur: BGM_STEP },
-    boss: { fn: scheduleBossStep, stepDur: BOSS_STEP }
+    canon:    { fn: scheduleBgmStep,      stepDur: BGM_STEP },
+    flagship: { fn: scheduleFlagshipStep, stepDur: FLAG_STEP },
+    ring:     { fn: scheduleRingStep,     stepDur: RING_STEP },
+    ramer:    { fn: scheduleRamerStep,    stepDur: RAM_STEP }
   };
   let currentTrackKey = 'canon';
   function setTrack(key) {
@@ -1487,7 +1529,7 @@
       boss = new Boss(bossLevel, BOSS_ORDER[(bossLevel - 1) % BOSS_ORDER.length]);
       floatText(W / 2, 120, 'BOSS 来袭 · ' + boss.def.name, '#ff6b6b');
       SFX.bossWarn();
-      setTrack('boss'); // 切入紧张战斗曲
+      setTrack(boss.type); // 切入该型号专属战斗曲
     }
     // Boss 更新
     if (boss) boss.update(dt, time);

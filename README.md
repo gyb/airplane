@@ -22,7 +22,7 @@
 - **主动技能**：炸弹（清屏清弹）/ 护盾（6 秒免伤）
 - **受击反馈**：中弹时震屏 + 红闪 + 殉爆粒子 + 飘字明示损失，并获得短暂缓冲护盾喘息
 - **波次难度曲线**：每 18 秒推进一波，敌机更密更快、组合偏重型
-- **合成音效 + 双 BGM**：平时卡农（D 大调）、Boss 战原创 D 小调战斗曲，全程 WebAudio 合成
+- **合成音效 + 四轨 BGM**：平时卡农（D 大调），每个 Boss 一首专属战斗曲——旗舰 D 小调进行曲 / 环堡沉重压迫曲 / 掠袭者 E 小调追击曲，全程 WebAudio 合成
 - **最高分持久化**：`localStorage` 保存，破纪录有提示
 - **暂停 / 静音**：`P` 暂停、`M` 静音
 - **响应式**：自适应桌面与移动端，支持多点触控
@@ -119,7 +119,7 @@ airplane/
 - `boss.firstScore` / `gapScore` / `gapStep` — Boss 登场门槛与逐级等差递增的间隔
 - `skills.shieldDuration` / `bombDamage` — 技能强度
 - `player.hurtShieldDuration` / `hurtShake` — 受击缓冲护盾与震屏强度
-- `BGM_BPM` / `BOSS_BPM` — 背景音乐速度
+- `BGM_BPM` / `FLAG_BPM` / `RING_BPM` / `RAM_BPM` — 各曲目速度
 
 新增内容（新敌机、新弹幕、新道具）只需在对应数据表里加条目并在相关分支处理。
 
