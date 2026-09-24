@@ -113,7 +113,7 @@ airplane/
 - `player.hitW` / `hitH` — 判定核大小（越小越硬核）
 - `enemy.spawnInterval` / `wave.duration` — 刷怪密度与波次节奏
 - `formation.chance` / `cooldown` — 编队触发概率与间隔
-- `boss.firstScore` / `baseHp` — Boss 登场时机与血量
+- `boss.firstScore` / `gapScore` / `gapStep` — Boss 登场门槛与逐级等差递增的间隔
 - `skills.shieldDuration` / `bombDamage` — 技能强度
 - `player.hurtShieldDuration` / `hurtShake` — 受击缓冲护盾与震屏强度
 - `BGM_BPM` / `BOSS_BPM` — 背景音乐速度

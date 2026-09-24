@@ -113,7 +113,7 @@ All values live in the `CONFIG` object at the top of `game.js` — adjust game f
 - `player.hitW` / `hitH` — hitbox core size (smaller = more hardcore)
 - `enemy.spawnInterval` / `wave.duration` — spawn density and wave pacing
 - `formation.chance` / `cooldown` — formation trigger odds and spacing
-- `boss.firstScore` / `baseHp` — boss timing and health
+- `boss.firstScore` / `gapScore` / `gapStep` — boss threshold and its per-level widening gap
 - `skills.shieldDuration` / `bombDamage` — skill strength
 - `player.hurtShieldDuration` / `hurtShake` — mercy shield duration and hit shake strength
 - `BGM_BPM` / `BOSS_BPM` — music tempo

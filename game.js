@@ -68,7 +68,9 @@
     },
     boss: {
       firstScore: 1200,    // 首个 Boss 登场的分数门槛
-      gapScore: 1800,      // 击败后到下一个 Boss 需要再涨的分数
+      gapScore: 1800,      // 击败后到下一个 Boss 需要再涨的基础分数
+      gapStep: 600,        // 间隔分数的等差增量：第 n 个 Boss 的间隔 = gapScore + (n-1)*gapStep
+                           // （后期分数涨速越来越快，固定间隔会让 Boss 出得越来越频繁）
       baseHp: 200,        // Boss 基础血量
       hpPerLevel: 80,     // 每个后续 Boss 额外血量
       score: 300,         // 击败基础奖励分
@@ -634,7 +636,8 @@
       powerups.push(new PowerUp(boss.x + offset, boss.y, drops[k]));
     }
     bossLevel++;
-    nextBossScore = score + CONFIG.boss.gapScore;
+    // 间隔按等差递增：越后面的 Boss 需要再涨越多分数，抵消后期分数涨速
+    nextBossScore = score + CONFIG.boss.gapScore + (bossLevel - 1) * CONFIG.boss.gapStep;
     setTrack('canon'); // 击败 Boss 后切回卡农
     boss = null;
   }
