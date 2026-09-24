@@ -15,10 +15,11 @@ A vertical-scrolling shoot-'em-up built from scratch with **HTML5 Canvas + vanil
 - **Pure canvas drawing**: planes, enemies, bullets and explosions are all drawn with Canvas paths/polygons — zero image assets
 - **Fair dual control**: keyboard and mouse/touch move at the same capped speed; the player's hitbox is a tiny "core" far smaller than the ship, so wing/nose grazes don't kill you
 - **5-level firepower**: single → twin → 3-way → 4-way spread → 5-way wide spread; power decays over time to keep pickups meaningful
-- **Wingman (option) system**: extra P pickups at max power convert into wingmen (up to 2) that trail your ship and fire alongside it; further picks give bonus score
+- **Wingman (option) system**: extra P pickups at max power convert into wingmen (up to 2) that trail your ship and fire alongside it; further picks give bonus score; all wingmen are destroyed when you get hit
 - **Three enemy types**: scout / fighter (aimed shots) / heavy (bullet-fan barrage)
 - **Boss fights**: spawns at a score threshold, descends and hovers with a patrol pattern, three attack phases, health bar; drops P/S/B on defeat
 - **Active skills**: bomb (screen/bullet clear) / shield (6s invulnerability)
+- **Hit feedback**: getting hit triggers screen shake, a red flash, explosion particles and clear floating text, plus a brief mercy shield to recover
 - **Wave-based difficulty curve**: a new wave every 18s — enemies get denser, faster, and heavier
 - **Synthesized SFX + dual BGM**: calm Canon (D major) normally, an original D-minor battle theme during boss fights — all generated with the Web Audio API
 - **Persistent high score**: saved in `localStorage` with a "new record" callout
@@ -110,6 +111,7 @@ All values live in the `CONFIG` object at the top of `game.js` — adjust game f
 - `enemy.spawnInterval` / `wave.duration` — spawn density and wave pacing
 - `boss.firstScore` / `baseHp` — boss timing and health
 - `skills.shieldDuration` / `bombDamage` — skill strength
+- `player.hurtShieldDuration` / `hurtShake` — mercy shield duration and hit shake strength
 - `BGM_BPM` / `BOSS_BPM` — music tempo
 
 Adding content (new enemies, bullet patterns, pickups) is just a new entry in the relevant data table plus a branch where needed.

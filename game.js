@@ -29,6 +29,8 @@
       fireInterval: 170,    // 自动开火间隔（毫秒）
       maxLives: 3,
       invincibleTime: 1500, // 受击后无敌时长（毫秒）
+      hurtShieldDuration: 2500, // 受击后的缓冲护盾时长（毫秒）：可见护盾泡+倒计时条，给玩家喘息适应
+      hurtShake: 12,        // 受击震屏幅度（像素，随时间快速衰减）
       maxPower: 5,          // 火力最高等级
       powerDecayInterval: 15000 // 火力每过这么久（毫秒）未拾取道具则降一级
     },
@@ -433,6 +435,8 @@
   let lastTime = 0;
   let pausedAt = 0;       // 进入暂停时的时间戳（用于恢复时平移计时器）
   let flashScreen = 0;    // 炸弹引爆时的全屏闪光强度（0~1）
+  let shake = 0;          // 受击震屏强度（0~1，映射到 hurtShake 像素）
+  let hurtFlash = 0;      // 受击红闪强度（0~1）
 
   // 由波次重算难度参数：刷怪更密、敌机更快、开火更频
   function recomputeDiff() {
@@ -513,11 +517,21 @@
     }
   }
 
-  // 玩家受击：扣命 + 无敌 + 爆炸，命数归零则结束
+  // 玩家受击：扣命 + 僚机全损 + 缓冲护盾 + 强反馈（震屏/红闪/爆炸/飘字），命数归零则结束
   function damagePlayer(time) {
     player.lives--;
     player.invincibleUntil = time + CONFIG.player.invincibleTime;
+    player.shieldUntil = time + CONFIG.player.hurtShieldDuration; // 可见护盾泡 = 喘息期，比无敌闪烁醒目
+    if (player.options.length > 0) {
+      for (const o of player.options) explode(o.x, o.y, '#7fd0ff', 8); // 僚机殉爆
+      player.options = [];
+      floatText(player.x, player.y - 40, '僚机损毁', '#7fd0ff');
+    }
     explode(player.x, player.y, '#9fd0ff', 12);
+    explode(player.x, player.y, '#ff5a4a', 10);
+    floatText(player.x, player.y - 20, '中弹！生命 -1', '#ff5a4a');
+    shake = 1;
+    hurtFlash = 1;
     SFX.playerHit();
     if (player.lives <= 0) {
       state = 'GAMEOVER';
@@ -602,7 +616,7 @@
       this.lives = CONFIG.player.maxLives;
       this.power = 1; // 当前火力等级（1..maxPower）
       this.powerDecayAt = 0; // 火力衰减时间戳（到点降一级）
-      this.options = [];     // 僚机列表（满级吃 P 转化，不随火力衰减/受击丢失）
+      this.options = [];     // 僚机列表（满级吃 P 转化；不随火力衰减，受击全部损毁）
       this.bombs = 1;        // 炸弹库存（开局送 1 颗）
       this.shieldUntil = 0;  // 护盾到期时间戳（>当前时间表示护盾中）
       this.lastFire = 0;
@@ -1125,6 +1139,10 @@
     // 全屏闪光衰减（炸弹引爆用）
     flashScreen = Math.max(0, flashScreen - 0.06 * dt);
 
+    // 受击震屏 / 红闪衰减
+    shake = Math.max(0, shake - 0.045 * dt);
+    hurtFlash = Math.max(0, hurtFlash - 0.045 * dt);
+
     if (state !== 'PLAYING') return;
 
     player.update(dt, time);
@@ -1289,6 +1307,13 @@
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
 
+    // 受击震屏：世界层整体随机偏移（背景与 HUD 不动，避免露出画布边缘）
+    ctx.save();
+    if (shake > 0) {
+      const amp = shake * CONFIG.player.hurtShake;
+      ctx.translate(rand(-1, 1) * amp, rand(-1, 1) * amp);
+    }
+
     // 星空
     ctx.fillStyle = '#ffffff';
     for (const s of stars) {
@@ -1328,9 +1353,17 @@
     }
     ctx.globalAlpha = 1;
 
-    // 炸弹全屏闪光
+    // 炸弹全屏闪光（画大一点，震屏偏移时也能盖满全屏）
     if (flashScreen > 0) {
+      const m = CONFIG.player.hurtShake + 2;
       ctx.fillStyle = 'rgba(255,255,255,' + (flashScreen * 0.5) + ')';
+      ctx.fillRect(-m, -m, W + m * 2, H + m * 2);
+    }
+    ctx.restore(); // 结束震屏偏移
+
+    // 受击红闪（整屏覆盖，不随震屏平移）
+    if (hurtFlash > 0) {
+      ctx.fillStyle = 'rgba(255,60,60,' + (hurtFlash * 0.3) + ')';
       ctx.fillRect(0, 0, W, H);
     }
 
