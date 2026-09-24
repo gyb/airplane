@@ -75,7 +75,7 @@ Design note: **movement and bombing are decoupled** — on mouse ("move = positi
 - 🟪 Fighter — 3 HP, fires aimed shots (stops firing once it passes you)
 - 🟩 Heavy — 7 HP, 5-way bullet fan, higher drop rate
 - 🟧 Diver — 1 HP, dives at your position once within range above you (commits to the dive, sidestep to dodge)
-- ⬜ Turret — 10 HP, hovers for ~6s firing 3-way volleys, then accelerates away; appears at higher waves
+- ⬜ Turret — a 40 HP mini gun-platform: hovers for ~8s launching rotating bullet rings (each volley telegraphed by a red charge-up ring), then accelerates away; appears at higher waves and deserves priority fire
 
 **Boss**: appears when your score crosses the threshold (default 1200), with three escalating phases (single → 3-way → 5-way fan). Defeating it drops one each of P/S/B plus a big score reward.
 

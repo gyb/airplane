@@ -103,10 +103,10 @@
     diver:   { w: 30, h: 34, hp: 1, speed: 2.3, sway: 0.5, score: 20,
                color: '#ffb13b', color2: '#b35900', cockpit: '#331a00',
                dive: { minY: 80, range: 78, speed: 6.5 } },
-    turret:  { w: 46, h: 40, hp: 10, speed: 1.4, sway: 0, score: 100,
-               color: '#8a97b8', color2: '#4a5570', cockpit: '#101830',
-               fireInterval: 1500, fan: { n: 3, spread: 0.28 },
-               hover: { yMin: 100, yMax: 210, frames: 380 } }
+    turret:  { w: 50, h: 44, hp: 40, speed: 1.4, sway: 0, score: 150,
+               color: '#8a97b8', color2: '#4a5570', cockpit: '#ff5a4a',
+               fireInterval: 1300,
+               hover: { yMin: 100, yMax: 210, frames: 460, ring: { n: 10, spin: 0.31 } } }
   };
 
   // 道具类型：power 火力 / shield 护盾 / bomb 炸弹
@@ -277,6 +277,7 @@
     start() { tone(440, 0.08, { type: 'triangle', vol: 0.3 }); tone(660, 0.08, { type: 'triangle', vol: 0.3, delay: 0.08 }); tone(880, 0.12, { type: 'triangle', vol: 0.3, delay: 0.16 }); },
     bomb() { noise(0.7, { vol: 0.5, freq: 400 }); tone(110, 0.7, { type: 'sawtooth', vol: 0.35, slideTo: 30 }); },
     shield() { tone(523, 0.1, { type: 'triangle', vol: 0.25 }); tone(784, 0.12, { type: 'triangle', vol: 0.25, delay: 0.08 }); tone(1046, 0.14, { type: 'triangle', vol: 0.25, delay: 0.16 }); },
+    turret() { tone(200, 0.1, { type: 'square', vol: 0.2 }); tone(150, 0.16, { type: 'square', vol: 0.16, delay: 0.06 }); },
   };
 
   // ---- 背景音乐：卡农（D 大调）主旋律 + 地面低音，lookahead 调度循环 ----
@@ -902,6 +903,7 @@
       this.vx = opts.vx || 0;   // 侧向速度（编队侧向突入；自爆锁定后复用）
       this.locked = false;      // 自爆机：已锁定俯冲
       this.diveVy = 0;          // 自爆机：俯冲垂直速度
+      this.bursts = 0;          // 悬浮炮：已发射的环形弹幕轮数（用于逐轮旋转）
       this.flash = 0;           // 受击白闪计时
       this.nextFire = undefined; // 首次开火时间（惰性赋值以错开节奏）
     }
@@ -917,15 +919,22 @@
         return;
       }
 
-      // 悬浮炮：入场 → 悬停扫射 → 加速撤离（this.t 为帧累计，暂停安全）
+      // 悬浮炮：入场 → 悬停环形弹幕 → 加速撤离（this.t 为帧累计，暂停安全）
       if (this.def.hover) {
         if (this.hoverY === undefined) {
           this.hoverY = rand(this.def.hover.yMin, this.def.hover.yMax);
           this.t = 0;
-          this.nextFire = time + 500; // 到位后稍作停顿再开火
         }
         if (this.leaving) { this.y += 2.6 * DIFF.enemySpeedMul * dt; return; }
-        if (this.y < this.hoverY) { this.y += this.speed * DIFF.enemySpeedMul * dt; return; }
+        if (this.y < this.hoverY) {
+          this.y += this.speed * DIFF.enemySpeedMul * dt;
+          if (this.y >= this.hoverY) { // 到位：短暂蓄力后首射，并飘字明示玩家
+            this.y = this.hoverY;
+            this.nextFire = time + 700;
+            floatText(this.x, this.y - 34, '悬浮炮!', '#ff9a8a');
+          }
+          return;
+        }
         this.t += dt;
         this.x = clamp(this.x + Math.sin(this.t * 0.03) * 0.5 * dt, this.w / 2, W - this.w / 2); // 缓慢横移
         if (this.t > this.def.hover.frames) { this.leaving = true; return; }
@@ -965,11 +974,23 @@
       }
     }
 
-    // 扇形弹幕机种（fan: n 发/张角）朝玩家定向散射；其余单发瞄准
+    // 悬浮炮环形弹幕 / 扇形弹幕机种（fan: n 发/张角）/ 其余单发瞄准
     fire() {
       const speed = CONFIG.enemyBullet.speed;
       const ox = this.x, oy = this.y + this.h / 2;
       const dx = player.x - ox, dy = player.y - oy;
+      if (this.def.hover && this.def.hover.ring) {
+        // 以玩家方向为基准的整圈弹幕，逐轮旋转错开，逼玩家走位拆解
+        const ring = this.def.hover.ring;
+        const base = Math.atan2(dy, dx) + this.bursts * ring.spin;
+        for (let i = 0; i < ring.n; i++) {
+          const a = base + Math.PI * 2 * i / ring.n;
+          enemyBullets.push(new EnemyBullet(ox, oy, Math.cos(a) * speed, Math.sin(a) * speed));
+        }
+        this.bursts++;
+        SFX.turret();
+        return;
+      }
       if (this.def.fan) {
         const { n, spread } = this.def.fan;
         const base = Math.atan2(dy, dx);
@@ -1004,9 +1025,21 @@
       ctx.lineTo(w * 0.14, -h * 0.3);
       ctx.lineTo(-w * 0.14, -h * 0.3);
       ctx.closePath(); ctx.fill();
-      // 驾驶舱
+      // 驾驶舱（悬浮炮为红色发光核心，提升辨识度）
+      if (this.def.hover) { ctx.shadowColor = '#ff5a4a'; ctx.shadowBlur = 10; }
       ctx.fillStyle = this.def.cockpit;
       ctx.beginPath(); ctx.arc(0, h * 0.1, w * 0.09, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // 悬浮炮充能警示：开火前 0.35 秒外圈红环向内收缩提示
+      if (this.def.hover && !this.leaving && this.nextFire !== undefined && time > this.nextFire - 350) {
+        const p = clamp((time - (this.nextFire - 350)) / 350, 0, 1);
+        ctx.strokeStyle = '#ff5a4a';
+        ctx.globalAlpha = 0.85 - p * 0.45;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, w * 0.55 + (1 - p) * 14, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
       // 受击白闪
       if (this.flash > 0) {
         ctx.globalAlpha = this.flash * 0.6;
