@@ -174,10 +174,10 @@
     ring: {
       name: '环堡', w: 150, h: 130, hpMul: 1.2, move: 'drift',
       phases: [
-        { interval: 1600, ring: { n: 14, spin: 0.28 } },                      // 整圈（以玩家方向为基准逐轮旋转）
-        { interval: 1400, ring: { n: 14, spin: 0.28 }, rings: 2 },            // 双圈相位差
-        { interval: 2000, ring: { n: 10, spin: 0.2 },                         // 螺旋流 + 定期圈弹
-          spiral: { every: 9, step: 0.5 } }
+        { interval: 1600, ring: { n: 16, spin: 0.28 } },                      // 整圈（以玩家方向为基准逐轮旋转）
+        { interval: 1400, ring: { n: 16, spin: 0.28 }, rings: 2 },            // 双圈相位差
+        { interval: 1800, ring: { n: 14, spin: 0.2 },                         // 双臂螺旋流 + 高密圈弹
+          spiral: { every: 7, step: 0.38, arms: 2 } }
       ]
     },
     ramer: {
@@ -1212,15 +1212,20 @@
         this.updateDash(dt, cfg);
       }
 
-      // 螺旋流（环堡阶段 3）：独立于 nextFire 的帧节奏，每 every 帧一发、角度持续递增
+      // 螺旋流（环堡阶段 3）：独立于 nextFire 的帧节奏，每 every 帧一臂、角度持续递增；
+      // arms>1 为多臂螺旋（各臂均分圆周），缝隙成倍收紧
       if (cfg.spiral) {
         this.spiralTick += dt;
         while (this.spiralTick >= cfg.spiral.every) {
           this.spiralTick -= cfg.spiral.every;
           this.spiralA += cfg.spiral.step;
-          enemyBullets.push(new EnemyBullet(this.x, this.y + this.h / 2 - 6,
-            Math.cos(this.spiralA) * CONFIG.enemyBullet.speed,
-            Math.sin(this.spiralA) * CONFIG.enemyBullet.speed));
+          const arms = cfg.spiral.arms || 1;
+          for (let k = 0; k < arms; k++) {
+            const a = this.spiralA + Math.PI * 2 * k / arms;
+            enemyBullets.push(new EnemyBullet(this.x, this.y + this.h / 2 - 6,
+              Math.cos(a) * CONFIG.enemyBullet.speed,
+              Math.sin(a) * CONFIG.enemyBullet.speed));
+          }
         }
       }
 

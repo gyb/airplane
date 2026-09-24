@@ -79,7 +79,7 @@ Design note: **movement and bombing are decoupled** — on mouse ("move = positi
 
 **Boss (three types rotating by level)**: appears when your score crosses the threshold (default 1200, with each gap widening arithmetically); HP scales with level, three escalating phases, and each defeat drops one each of P/S/B plus a big score reward.
 - 🟥 **Flagship** — cruises side to side with aimed barrages: single → 3-way → 5-way fan + vertical shots
-- 🟦 **Ring Fortress** — a hovering ring that drifts (faster as it takes damage) with all-direction fire: rotating rings → twin offset rings → spiral stream + rings; extra HP since it sits still
+- 🟦 **Ring Fortress** — a hovering ring that drifts (faster as it takes damage) with all-direction fire: rotating rings → twin offset rings → twin-arm spiral stream + dense rings; extra HP since it sits still
 - 🟪 **Ramer** — telegraphs (flashing), then dashes across the screen (ramming hurts!); drops slow bullets along its dash forming walls you must gap through; its pauses are your damage windows; lower HP since it never stops moving
 
 ---
