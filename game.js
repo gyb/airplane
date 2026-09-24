@@ -390,20 +390,23 @@
     if (step % 2 === 1) bgmHat(time);
   }
 
-  // 环堡：D 小调沉重压迫曲——低音级数下行 + 圣咏式慢旋律 + 两拍一记重锤
+  // 环堡：D 小调沉重压迫曲——挽歌式下行低音 + 小六度跳跃的钟楼咏叹 + 两拍一记重锤
   const RING_BPM = 104;
   const RING_STEP = 60 / RING_BPM / 2;
-  // 低音每 4 步（半小节）换一次：D2 → Bb1 → C2 → A1
-  const RING_BASS = [73.42, 58.27, 65.41, 55.00];
-  // 圣咏式旋律（D4→F4→A4→G4→F4→E4 咏叹下行，0 为休止）
+  // 低音每 4 步（半小节）换一次：Dm → C → Bb → Am 挽歌式级数下行
+  const RING_BASS = [73.42, 65.41, 58.27, 55.00];
+  // 咏叹旋律：D5 起跳小六度到 Bb5 的"钟楼呼号"是记忆点（半音下滑似叹息），
+  // 两次陈述后以五度空心音 E5 收束；0 为休止
   const RING_MELODY = [
-    293.66, 0, 0, 349.23, 0, 0, 440.00, 0,
-    392.00, 0, 0, 349.23, 0, 329.63, 0, 0
+    587.33, 0, 0, 932.33,
+    880.00, 0, 783.99, 0,
+    587.33, 0, 0, 932.33,
+    880.00, 0, 659.25, 0
   ];
   function scheduleRingStep(step, time) {
     bgmNote(RING_BASS[(step >> 2) % RING_BASS.length], time, RING_STEP * 3.8, 'sawtooth', 0.18);
     const m = RING_MELODY[step % RING_MELODY.length];
-    if (m) bgmNote(m, time, RING_STEP * 2.4, 'triangle', 0.12);
+    if (m) bgmNote(m, time, RING_STEP * 1.6, 'triangle', 0.13);
     if (step % 8 === 0 || step % 8 === 4) bgmKick(time); // 1、3 拍重锤，沉重的步进感
     if (step % 4 === 2) bgmHat(time);
   }
@@ -416,15 +419,18 @@
     82.41, 82.41, 82.41, 82.41, 98.00, 98.00, 98.00, 98.00,
     110.00, 110.00, 110.00, 110.00, 123.47, 123.47, 146.83, 123.47
   ];
-  // 神经质旋律（E5/G5/A5 拉扯，句尾 F5→Eb5 尖刺增添危险感，0 为休止）
+  // 追击旋律：每小节首音踩在该小节低音根音上（E5→G5→A5→B5 随低音逐级爬升，
+  // 步步逼近），开头 F#5→G5 半音冲撞制造慌张，一路级进推到 D6 顶点后收束；0 为休止
   const RAM_MELODY = [
-    659.26, 0, 783.99, 659.26, 0, 880.00, 0, 783.99,
-    659.26, 0, 783.99, 659.26, 0, 698.46, 0, 622.25
+    659.26, 0, 783.99, 739.99,
+    783.99, 0, 880.00, 783.99,
+    880.00, 0, 987.77, 880.00,
+    987.77, 0, 1174.66, 0
   ];
   function scheduleRamerStep(step, time) {
     bgmNote(RAM_BASS[step % RAM_BASS.length], time, RAM_STEP * 0.85, 'sawtooth', 0.13);
     const m = RAM_MELODY[step % RAM_MELODY.length];
-    if (m) bgmNote(m, time, RAM_STEP * 0.9, 'square', 0.09);
+    if (m) bgmNote(m, time, RAM_STEP * 0.9, 'square', 0.10);
     if (step % 2 === 0) bgmKick(time);
     bgmHat(time); // 每个八分音符都有踩镲，追击的急促感
   }
