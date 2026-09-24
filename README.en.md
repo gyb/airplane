@@ -18,7 +18,7 @@ A vertical-scrolling shoot-'em-up built from scratch with **HTML5 Canvas + vanil
 - **Wingman (option) system**: extra P pickups at max power convert into wingmen (up to 2) that trail your ship and fire alongside it; further picks give bonus score; all wingmen are destroyed when you get hit
 - **Five enemy types**: scout / fighter (aimed shots) / heavy (bullet-fan barrage) / diver (lock-on dive) / turret (hovering volley)
 - **Enemy formations**: V-wedge / column / side sweep / gap-line barricades unlock as waves advance, interleaved with single spawns
-- **Boss fights**: spawns at a score threshold, descends and hovers with a patrol pattern, three attack phases, health bar; drops P/S/B on defeat
+- **Boss fights**: three bosses rotate by level — flagship (aimed barrages) / ring fortress (bullet rings + spiral) / ramer (dash attacks + bullet trails), each with three escalating phases and a health bar; drops P/S/B on defeat
 - **Active skills**: bomb (screen/bullet clear) / shield (6s invulnerability)
 - **Hit feedback**: getting hit triggers screen shake, a red flash, explosion particles and clear floating text, plus a brief mercy shield to recover
 - **Wave-based difficulty curve**: a new wave every 18s — enemies get denser, faster, and heavier
@@ -77,7 +77,10 @@ Design note: **movement and bombing are decoupled** — on mouse ("move = positi
 - 🟧 Diver — 1 HP, dives at your position once within range above you (commits to the dive, sidestep to dodge)
 - ⬜ Turret — a 30 HP mini gun-platform: hovers for ~8s launching rotating bullet rings (each volley telegraphed by a red charge-up ring), then accelerates away; appears at higher waves and deserves priority fire
 
-**Boss**: appears when your score crosses the threshold (default 1200), with three escalating phases (single → 3-way → 5-way fan). Defeating it drops one each of P/S/B plus a big score reward.
+**Boss (three types rotating by level)**: appears when your score crosses the threshold (default 1200, with each gap widening arithmetically); HP scales with level, three escalating phases, and each defeat drops one each of P/S/B plus a big score reward.
+- 🟥 **Flagship** — cruises side to side with aimed barrages: single → 3-way → 5-way fan + vertical shots
+- 🟦 **Ring Fortress** — a hovering ring that drifts (faster as it takes damage) with all-direction fire: rotating rings → twin offset rings → spiral stream + rings; extra HP since it sits still
+- 🟪 **Ramer** — telegraphs (flashing), then dashes across the screen (ramming hurts!); drops slow bullets along its dash forming walls you must gap through; its pauses are your damage windows; lower HP since it never stops moving
 
 ---
 

@@ -159,6 +159,37 @@
       } }
   ];
 
+  // Boss 型号（按 bossLevel 轮换）：name 名称 · w/h 尺寸 · hpMul 血量系数（按命中窗口差异校准）
+  //   move 移动模式（cruise 巡航 / drift 漂移 / dash 冲刺）· phases 各阶段攻击参数
+  const BOSS_ORDER = ['flagship', 'ring', 'ramer'];
+  const BOSS_TYPES = {
+    flagship: {
+      name: '旗舰', w: 160, h: 110, hpMul: 1.0, move: 'cruise',
+      phases: [
+        { interval: 1000, shots: [0] },                                       // 单发瞄准
+        { interval: 820,  shots: [-0.3, 0, 0.3] },                            // 三向
+        { interval: 680,  shots: [-0.4, -0.2, 0, 0.2, 0.4], vert: true }      // 五向宽扇 + 双垂直
+      ]
+    },
+    ring: {
+      name: '环堡', w: 150, h: 130, hpMul: 1.2, move: 'drift',
+      phases: [
+        { interval: 1600, ring: { n: 14, spin: 0.28 } },                      // 整圈（以玩家方向为基准逐轮旋转）
+        { interval: 1400, ring: { n: 14, spin: 0.28 }, rings: 2 },            // 双圈相位差
+        { interval: 2000, ring: { n: 10, spin: 0.2 },                         // 螺旋流 + 定期圈弹
+          spiral: { every: 9, step: 0.5 } }
+      ]
+    },
+    ramer: {
+      name: '掠袭者', w: 150, h: 70, hpMul: 0.85, move: 'dash',
+      phases: [
+        { interval: 900,  shots: [-0.25, 0, 0.25] },                          // 停顿边缘 3 连瞄准
+        { interval: 900,  shots: [-0.25, 0, 0.25], trail: 1 },                // + 冲刺沿途撒单排弹
+        { interval: 700,  shots: [-0.25, 0, 0.25], trail: 2, column: 3 }      // 双排撒弹 + 停顿弹幕柱
+      ]
+    }
+  };
+
   // ================= SETUP =================
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -188,6 +219,15 @@
   // 右下角炸弹按钮区域（供鼠标 / 触摸点击释放炸弹）
   const BOMB_BTN = { x: W - 46, y: H - 46, r: 32 };
   function inBombButton(x, y) { return Math.hypot(x - BOMB_BTN.x, y - BOMB_BTN.y) < BOMB_BTN.r; }
+
+  // 环形弹幕：从 (x,y) 以基准角 base 整圈发射 n 发（悬浮炮 / 环堡 Boss 共用）
+  function ringBurst(x, y, n, base) {
+    const speed = CONFIG.enemyBullet.speed;
+    for (let i = 0; i < n; i++) {
+      const a = base + Math.PI * 2 * i / n;
+      enemyBullets.push(new EnemyBullet(x, y, Math.cos(a) * speed, Math.sin(a) * speed));
+    }
+  }
 
   // 按当前波次加权选择敌机类型（波次越高，重型机/自爆机/悬浮炮越多）
   function pickEnemyType() {
@@ -280,6 +320,7 @@
     bomb() { noise(0.7, { vol: 0.5, freq: 400 }); tone(110, 0.7, { type: 'sawtooth', vol: 0.35, slideTo: 30 }); },
     shield() { tone(523, 0.1, { type: 'triangle', vol: 0.25 }); tone(784, 0.12, { type: 'triangle', vol: 0.25, delay: 0.08 }); tone(1046, 0.14, { type: 'triangle', vol: 0.25, delay: 0.16 }); },
     turret() { tone(200, 0.1, { type: 'square', vol: 0.2 }); tone(150, 0.16, { type: 'square', vol: 0.16, delay: 0.06 }); },
+    dash() { noise(0.16, { vol: 0.22, freq: 2400, type: 'highpass' }); tone(300, 0.16, { type: 'sawtooth', vol: 0.12, slideTo: 90 }); },
   };
 
   // ---- 背景音乐：卡农（D 大调）主旋律 + 地面低音，lookahead 调度循环 ----
@@ -985,11 +1026,7 @@
       if (this.def.hover && this.def.hover.ring) {
         // 以玩家方向为基准的整圈弹幕，逐轮旋转错开，逼玩家走位拆解
         const ring = this.def.hover.ring;
-        const base = Math.atan2(dy, dx) + this.bursts * ring.spin;
-        for (let i = 0; i < ring.n; i++) {
-          const a = base + Math.PI * 2 * i / ring.n;
-          enemyBullets.push(new EnemyBullet(ox, oy, Math.cos(a) * speed, Math.sin(a) * speed));
-        }
+        ringBurst(ox, oy, ring.n, Math.atan2(dy, dx) + this.bursts * ring.spin);
         this.bursts++;
         SFX.turret();
         return;
@@ -1112,27 +1149,39 @@
     }
   }
 
+  // Boss：三种型号共用 入场/阶段划分/血条/掉落/暂停平移 框架，
+  // 移动与攻击按 BOSS_TYPES 的 move/phases 分支实现
   class Boss {
-    constructor(level) {
+    constructor(level, typeKey) {
+      const def = BOSS_TYPES[typeKey];
+      this.type = typeKey;
+      this.def = def;
       this.level = level;
-      this.w = 160; this.h = 110;
+      this.w = def.w; this.h = def.h;
       this.x = W / 2;
       this.y = -this.h;       // 从画面上方入场
       this.targetY = 120;     // 入场后悬停的 y
       this.entered = false;
-      this.maxHp = CONFIG.boss.baseHp + (level - 1) * CONFIG.boss.hpPerLevel;
+      this.maxHp = Math.round(CONFIG.boss.baseHp * def.hpMul + (level - 1) * CONFIG.boss.hpPerLevel);
       this.hp = this.maxHp;
       this.phase = 1;
       this.nextFire = 0;
-      this.t = 0;             // 用于运动/呼吸节奏
+      this.t = 0;             // 帧累计：运动/呼吸/螺旋节奏（暂停安全）
       this.flash = 0;
+      this.bursts = 0;        // 环堡：已发圈数（整圈旋转基准）
+      this.spiralA = 0;       // 环堡：螺旋流当前发射角
+      this.spiralTick = 0;    // 环堡：螺旋流帧计数
+      this.state = 'pause';   // 掠袭者：pause 停顿 / charge 蓄力 / dash 冲刺
+      this.stateT = 0;        // 掠袭者：当前状态帧数
+      this.dir = Math.random() < 0.5 ? 1 : -1; // 掠袭者：冲刺方向
+      this.pauseY = 120;      // 掠袭者：本次停顿的目标高度
     }
 
     update(dt, time) {
       this.t += dt;
       this.flash = Math.max(0, this.flash - 0.08 * dt);
 
-      // 入场：下移到悬停位
+      // 入场：下移到悬停位（各型通用）
       if (!this.entered) {
         this.y += 1.5 * dt;
         if (this.y >= this.targetY) {
@@ -1143,34 +1192,108 @@
         return; // 入场期间不开火
       }
 
-      // 悬停后左右巡航 + 轻微上下浮动
-      const margin = W / 2 - this.w / 2 - 12;
-      this.x = W / 2 + Math.sin(this.t * 0.02) * margin;
-      this.y = this.targetY + Math.sin(this.t * 0.03) * 8;
-
-      // 按血量划分攻击阶段
+      // 按血量划分攻击阶段（各型通用）
       const r = this.hp / this.maxHp;
       this.phase = r > 0.66 ? 1 : r > 0.33 ? 2 : 3;
+      const cfg = this.def.phases[this.phase - 1];
+
+      // 移动模式
+      if (this.def.move === 'cruise') {
+        // 左右巡航 + 轻微上下浮动
+        const margin = W / 2 - this.w / 2 - 12;
+        this.x = W / 2 + Math.sin(this.t * 0.02) * margin;
+        this.y = this.targetY + Math.sin(this.t * 0.03) * 8;
+      } else if (this.def.move === 'drift') {
+        // 顶部缓慢漂移，血量越低漂得越快
+        const spd = 0.012 + (1 - r) * 0.02;
+        this.x = W / 2 + Math.sin(this.t * spd) * (W / 2 - this.w / 2 - 16);
+        this.y = this.targetY + Math.sin(this.t * 0.025) * 10;
+      } else {
+        this.updateDash(dt, cfg);
+      }
+
+      // 螺旋流（环堡阶段 3）：独立于 nextFire 的帧节奏，每 every 帧一发、角度持续递增
+      if (cfg.spiral) {
+        this.spiralTick += dt;
+        while (this.spiralTick >= cfg.spiral.every) {
+          this.spiralTick -= cfg.spiral.every;
+          this.spiralA += cfg.spiral.step;
+          enemyBullets.push(new EnemyBullet(this.x, this.y + this.h / 2 - 6,
+            Math.cos(this.spiralA) * CONFIG.enemyBullet.speed,
+            Math.sin(this.spiralA) * CONFIG.enemyBullet.speed));
+        }
+      }
 
       // 开火
       if (time >= this.nextFire) this.fire(time);
     }
 
-    // 阶段 1 单发瞄准 / 阶段 2 三发散射 / 阶段 3 五发宽扇 + 垂直弹
+    // 掠袭者冲刺状态机：停顿(开火) → 蓄力预警(闪烁) → 横向冲刺(沿途撒弹) → 对侧停顿
+    updateDash(dt, cfg) {
+      this.stateT += dt;
+      if (this.state === 'pause') {
+        this.y += (this.pauseY - this.y) * 0.06 * dt; // 缓慢逼近本次停顿高度
+        if (this.stateT >= (this.phase === 3 ? 55 : 70)) { this.state = 'charge'; this.stateT = 0; }
+      } else if (this.state === 'charge') {
+        this.flash = Math.floor(this.stateT / 8) % 2 === 0 ? 1 : 0; // 蓄力预警闪烁
+        if (this.stateT >= 30) { // 0.5s 预警后起冲
+          this.state = 'dash';
+          this.stateT = 0;
+          SFX.dash();
+        }
+      } else { // dash
+        this.x += this.dir * 7 * dt;
+        // 沿途撒弹：身后留下慢速垂直下落弹，形成必须找缺口穿的横墙
+        if (cfg.trail) {
+          this.trailAcc = (this.trailAcc || 0) + dt;
+          if (this.trailAcc >= 7) {
+            this.trailAcc = 0;
+            for (let k = 0; k < cfg.trail; k++) {
+              enemyBullets.push(new EnemyBullet(
+                this.x - this.dir * this.w * 0.4, this.y + k * 12 + rand(-4, 8),
+                0, 1.8)); // 慢速下落
+            }
+          }
+        }
+        const edge = this.dir > 0 ? W - this.w / 2 - 8 : this.w / 2 + 8;
+        if ((this.dir > 0 && this.x >= edge) || (this.dir < 0 && this.x <= edge)) {
+          this.dir = -this.dir;
+          this.state = 'pause';
+          this.stateT = 0;
+          this.nextFire = 0; // 到侧立即获得开火机会
+          // 下次停顿高度：阶段越高压得越低（阶段 3 最低到 y≈260）
+          this.pauseY = rand(this.phase === 3 ? 130 : 110, this.phase === 3 ? 260 : 200);
+        }
+      }
+    }
+
+    // 各型开火：参数取自 BOSS_TYPES.phases[phase-1]
     fire(time) {
+      const cfg = this.def.phases[this.phase - 1];
       const speed = CONFIG.enemyBullet.speed;
       const ox = this.x, oy = this.y + this.h / 2 - 6;
       const base = Math.atan2(player.y - oy, player.x - ox);
-      this.nextFire = time + (this.phase === 1 ? 1000 : this.phase === 2 ? 820 : 680);
       const shoot = (a) => enemyBullets.push(new EnemyBullet(ox, oy, Math.cos(a) * speed, Math.sin(a) * speed));
-      if (this.phase === 1) {
-        shoot(base);
-      } else if (this.phase === 2) {
-        for (let i = 0; i < 3; i++) shoot(base - 0.3 + 0.3 * i);
-      } else {
-        for (let i = 0; i < 5; i++) shoot(base - 0.4 + 0.2 * i);
-        shoot(Math.PI / 2 - 0.25);
-        shoot(Math.PI / 2 + 0.25);
+
+      if (this.type === 'flagship') {
+        this.nextFire = time + cfg.interval;
+        for (const off of cfg.shots) shoot(base + off);
+        if (cfg.vert) { shoot(Math.PI / 2 - 0.25); shoot(Math.PI / 2 + 0.25); } // 双垂直弹
+      } else if (this.type === 'ring') {
+        this.nextFire = time + cfg.interval;
+        ringBurst(ox, oy, cfg.ring.n, base + this.bursts * cfg.ring.spin);
+        if (cfg.rings === 2) ringBurst(ox, oy, cfg.ring.n, base + (this.bursts + 0.5) * cfg.ring.spin); // 双圈相位差
+        this.bursts++;
+        SFX.turret(); // 环堡与悬浮炮同源，共用音效
+      } else { // ramer：仅停顿时开火，冲刺/蓄力中跳过（回到停顿立即补射）
+        if (this.state !== 'pause') return;
+        this.nextFire = time + cfg.interval;
+        for (const off of cfg.shots) shoot(base + off);
+        if (cfg.column) { // 阶段 3：停顿时垂直弹幕柱
+          for (let k = 0; k < cfg.column; k++) {
+            enemyBullets.push(new EnemyBullet(ox + (k - (cfg.column - 1) / 2) * 26, oy, 0, speed));
+          }
+        }
       }
     }
 
@@ -1179,47 +1302,93 @@
       ctx.save();
       ctx.translate(x, y);
 
-      // 侧翼
-      ctx.fillStyle = '#4a1d28';
-      ctx.beginPath();
-      ctx.moveTo(-w * 0.5, -h * 0.05); ctx.lineTo(-w * 0.32, h * 0.28); ctx.lineTo(-w * 0.2, h * 0.18);
-      ctx.closePath(); ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(w * 0.5, -h * 0.05); ctx.lineTo(w * 0.32, h * 0.28); ctx.lineTo(w * 0.2, h * 0.18);
-      ctx.closePath(); ctx.fill();
+      if (this.type === 'flagship') {
+        // 侧翼
+        ctx.fillStyle = '#4a1d28';
+        ctx.beginPath();
+        ctx.moveTo(-w * 0.5, -h * 0.05); ctx.lineTo(-w * 0.32, h * 0.28); ctx.lineTo(-w * 0.2, h * 0.18);
+        ctx.closePath(); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(w * 0.5, -h * 0.05); ctx.lineTo(w * 0.32, h * 0.28); ctx.lineTo(w * 0.2, h * 0.18);
+        ctx.closePath(); ctx.fill();
 
-      // 主体（六边形）
-      ctx.fillStyle = '#6b2a3a';
-      ctx.beginPath();
-      ctx.moveTo(0, -h * 0.5);
-      ctx.lineTo(w * 0.42, -h * 0.18);
-      ctx.lineTo(w * 0.36, h * 0.34);
-      ctx.lineTo(0, h * 0.5);
-      ctx.lineTo(-w * 0.36, h * 0.34);
-      ctx.lineTo(-w * 0.42, -h * 0.18);
-      ctx.closePath(); ctx.fill();
+        // 主体（六边形）
+        ctx.fillStyle = '#6b2a3a';
+        ctx.beginPath();
+        ctx.moveTo(0, -h * 0.5);
+        ctx.lineTo(w * 0.42, -h * 0.18);
+        ctx.lineTo(w * 0.36, h * 0.34);
+        ctx.lineTo(0, h * 0.5);
+        ctx.lineTo(-w * 0.36, h * 0.34);
+        ctx.lineTo(-w * 0.42, -h * 0.18);
+        ctx.closePath(); ctx.fill();
 
-      // 前部炮管
-      ctx.fillStyle = '#3a3a44';
-      ctx.fillRect(-w * 0.24, h * 0.18, 9, 20);
-      ctx.fillRect(w * 0.24 - 9, h * 0.18, 9, 20);
+        // 前部炮管
+        ctx.fillStyle = '#3a3a44';
+        ctx.fillRect(-w * 0.24, h * 0.18, 9, 20);
+        ctx.fillRect(w * 0.24 - 9, h * 0.18, 9, 20);
+      } else if (this.type === 'ring') {
+        // 外环装甲带
+        ctx.strokeStyle = '#4a5570';
+        ctx.lineWidth = 10;
+        ctx.beginPath(); ctx.arc(0, 0, w * 0.42, 0, Math.PI * 2); ctx.stroke();
+        // 旋转炮舱（随 t 公转）
+        ctx.fillStyle = '#8a97b8';
+        for (let i = 0; i < 8; i++) {
+          const a = this.t * 0.02 + Math.PI * 2 * i / 8;
+          ctx.save();
+          ctx.translate(Math.cos(a) * w * 0.42, Math.sin(a) * w * 0.42);
+          ctx.rotate(a);
+          ctx.fillRect(-7, -5, 14, 10);
+          ctx.restore();
+        }
+        // 内环装甲
+        ctx.fillStyle = '#3a4258';
+        ctx.beginPath(); ctx.arc(0, 0, w * 0.26, 0, Math.PI * 2); ctx.fill();
+      } else {
+        // 掠袭者：宽三角掠翼、机头朝下
+        ctx.fillStyle = '#4a1d5a';
+        ctx.beginPath();
+        ctx.moveTo(0, h * 0.5);
+        ctx.lineTo(w * 0.5, -h * 0.2);
+        ctx.lineTo(w * 0.18, -h * 0.38);
+        ctx.lineTo(-w * 0.18, -h * 0.38);
+        ctx.lineTo(-w * 0.5, -h * 0.2);
+        ctx.closePath(); ctx.fill();
+        // 机身脊线
+        ctx.fillStyle = '#a355d8';
+        ctx.beginPath();
+        ctx.moveTo(0, h * 0.5);
+        ctx.lineTo(w * 0.13, -h * 0.32);
+        ctx.lineTo(-w * 0.13, -h * 0.32);
+        ctx.closePath(); ctx.fill();
+        // 座舱感光点
+        ctx.fillStyle = '#ffd0ff';
+        ctx.beginPath(); ctx.arc(0, h * 0.1, w * 0.05, 0, Math.PI * 2); ctx.fill();
+        // 双引擎喷焰（冲刺时拉长）
+        const flame = this.state === 'dash' ? 1.8 : 1;
+        ctx.fillStyle = '#ff8a5c';
+        ctx.fillRect(-w * 0.12, -h * 0.38 - 9 * flame, 6, 9 * flame);
+        ctx.fillRect(w * 0.12 - 6, -h * 0.38 - 9 * flame, 6, 9 * flame);
+      }
 
-      // 核心弱点（随阶段变红 + 脉冲呼吸）
+      // 核心弱点（随阶段变红 + 脉冲呼吸；环堡红核承接悬浮炮的视觉语言）
       const pulse = 1 + Math.sin(this.t * 0.12) * 0.15;
       const core = this.phase === 3 ? '#ff3b3b' : this.phase === 2 ? '#ff7a3b' : '#ffb13b';
       ctx.shadowColor = core;
       ctx.shadowBlur = 18;
       ctx.fillStyle = core;
-      ctx.beginPath(); ctx.arc(0, 0, 13 * pulse, 0, Math.PI * 2); ctx.fill();
+      const cr = (this.type === 'ring' ? 16 : 13) * pulse;
+      ctx.beginPath(); ctx.arc(0, 0, cr, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
       ctx.fillStyle = '#fff7e6';
-      ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 0, cr * 0.38, 0, Math.PI * 2); ctx.fill();
 
       // 受击白闪
       if (this.flash > 0) {
         ctx.globalAlpha = this.flash * 0.5;
         ctx.fillStyle = '#ffffff';
-        ctx.beginPath(); ctx.arc(0, 0, w * 0.4, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(0, 0, Math.max(w, h) * 0.42, 0, Math.PI * 2); ctx.fill();
         ctx.globalAlpha = 1;
       }
       ctx.restore();
@@ -1308,10 +1477,10 @@
       floatText(W / 2, H / 2 - 60, '第 ' + wave + ' 波', '#7fb4ff');
     }
 
-    // Boss 触发：达到分数门槛且当前无 Boss 时登场
+    // Boss 触发：达到分数门槛且当前无 Boss 时登场（型号按等级轮换）
     if (!boss && score >= nextBossScore) {
-      boss = new Boss(bossLevel);
-      floatText(W / 2, 120, 'BOSS 来袭!', '#ff6b6b');
+      boss = new Boss(bossLevel, BOSS_ORDER[(bossLevel - 1) % BOSS_ORDER.length]);
+      floatText(W / 2, 120, 'BOSS 来袭 · ' + boss.def.name, '#ff6b6b');
       SFX.bossWarn();
       setTrack('boss'); // 切入紧张战斗曲
     }
@@ -1609,7 +1778,7 @@
     ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
-    ctx.fillText('BOSS  Lv.' + boss.level, bx, by - 3);
+    ctx.fillText(boss.def.name + ' Lv.' + boss.level, bx, by - 3);
   }
 
   // 右下角炸弹按钮（显示库存，可点击释放）
