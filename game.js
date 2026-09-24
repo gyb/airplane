@@ -768,14 +768,14 @@
       this.side = side;
       this.w = 14; this.h = 14;
       this.x = player.x + side * CONFIG.option.offsetX;
-      this.y = player.y + side * CONFIG.option.offsetY;
+      this.y = player.y + CONFIG.option.offsetY; // 左右僚机同高（仅水平镜像）
       this.phase = rand(0, Math.PI * 2);
     }
 
     update(dt) {
       // 向目标点插值：快移时略微拖后，形成"编队感"
       const tx = player.x + this.side * CONFIG.option.offsetX;
-      const ty = player.y + this.side * CONFIG.option.offsetY;
+      const ty = player.y + CONFIG.option.offsetY;
       this.x += (tx - this.x) * CONFIG.option.followEase * dt;
       this.y += (ty - this.y) * CONFIG.option.followEase * dt;
     }
