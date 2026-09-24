@@ -15,6 +15,7 @@ A vertical-scrolling shoot-'em-up built from scratch with **HTML5 Canvas + vanil
 - **Pure canvas drawing**: planes, enemies, bullets and explosions are all drawn with Canvas paths/polygons — zero image assets
 - **Fair dual control**: keyboard and mouse/touch move at the same capped speed; the player's hitbox is a tiny "core" far smaller than the ship, so wing/nose grazes don't kill you
 - **5-level firepower**: single → twin → 3-way → 4-way spread → 5-way wide spread; power decays over time to keep pickups meaningful
+- **Wingman (option) system**: extra P pickups at max power convert into wingmen (up to 2) that trail your ship and fire alongside it; further picks give bonus score
 - **Three enemy types**: scout / fighter (aimed shots) / heavy (bullet-fan barrage)
 - **Boss fights**: spawns at a score threshold, descends and hovers with a patrol pattern, three attack phases, health bar; drops P/S/B on defeat
 - **Active skills**: bomb (screen/bullet clear) / shield (6s invulnerability)
@@ -63,7 +64,7 @@ Design note: **movement and bombing are decoupled** — on mouse ("move = positi
 ## 🧩 Gameplay
 
 **Pickups** (dropped by enemies / boss)
-- 🟡 **P** — firepower +1 (max level 5; extra picks at max give bonus score; decays if you stop collecting)
+- 🟡 **P** — firepower +1 (max level 5; extra picks at max convert into a wingman first, then give bonus score once you have both; decays if you stop collecting)
 - 🟢 **S** — shield, 6s invulnerability
 - 🟠 **B** — bomb +1 (max 3; extra picks at max give bonus score)
 
@@ -94,7 +95,7 @@ airplane/
 | `AUDIO` | Web Audio SFX synthesis + dual-track BGM scheduler |
 | `INPUT` | unified keyboard / mouse / multi-touch input |
 | `STATE` | state machine (MENU / PLAYING / PAUSED / GAMEOVER) |
-| `ENTITY` | Player / Bullet / Enemy / EnemyBullet / PowerUp / Boss |
+| `ENTITY` | Player / Bullet / Option / Enemy / EnemyBullet / PowerUp / Boss |
 | `UPDATE` / `RENDER` / `LOOP` | per-frame logic & drawing, `requestAnimationFrame` loop |
 
 ---
@@ -104,6 +105,7 @@ airplane/
 All values live in the `CONFIG` object at the top of `game.js` — adjust game feel without hunting through code, e.g.:
 
 - `player.speed` / `fireInterval` — movement and fire rate
+- `option.maxCount` / `followEase` — wingman count and trailing feel
 - `player.hitW` / `hitH` — hitbox core size (smaller = more hardcore)
 - `enemy.spawnInterval` / `wave.duration` — spawn density and wave pacing
 - `boss.firstScore` / `baseHp` — boss timing and health

@@ -8,7 +8,7 @@
  *   SETUP      画布与上下文
  *   INPUT      统一输入系统（键盘 / 鼠标 / 触摸）
  *   STATE      游戏状态机（MENU / PLAYING / GAMEOVER）
- *   ENTITY     Player / Bullet / Enemy / EnemyBullet / PowerUp / Particle
+ *   ENTITY     Player / Bullet / Option / Enemy / EnemyBullet / PowerUp / Particle
  *   UPDATE     每帧逻辑更新
  *   RENDER     每帧绘制
  *   LOOP       requestAnimationFrame 主循环
@@ -31,6 +31,14 @@
       invincibleTime: 1500, // 受击后无敌时长（毫秒）
       maxPower: 5,          // 火力最高等级
       powerDecayInterval: 15000 // 火力每过这么久（毫秒）未拾取道具则降一级
+    },
+    option: {
+      maxCount: 2,       // 僚机数量上限（满级吃 P 转化，先左后右各一）
+      offsetX: 34,       // 跟玩家中心的水平间距
+      offsetY: 30,       // 跟玩家中心的垂直后置距离
+      followEase: 0.18,  // 跟随阻尼系数（每帧向目标点插值的比例，60fps 基准）
+      bulletW: 3,        // 僚机小弹宽
+      bulletH: 10        // 僚机小弹高
     },
     bullet: { width: 5, height: 16, speed: 11 },
     enemy: {
@@ -594,6 +602,7 @@
       this.lives = CONFIG.player.maxLives;
       this.power = 1; // 当前火力等级（1..maxPower）
       this.powerDecayAt = 0; // 火力衰减时间戳（到点降一级）
+      this.options = [];     // 僚机列表（满级吃 P 转化，不随火力衰减/受击丢失）
       this.bombs = 1;        // 炸弹库存（开局送 1 颗）
       this.shieldUntil = 0;  // 护盾到期时间戳（>当前时间表示护盾中）
       this.lastFire = 0;
@@ -641,6 +650,9 @@
       this.x = clamp(this.x, this.w / 2, W - this.w / 2);
       this.y = clamp(this.y, this.h / 2, H - this.h / 2);
 
+      // 僚机阻尼跟随（纯位置状态、无绝对时间戳计时器，暂停天然安全）
+      for (const o of this.options) o.update(dt);
+
       // 自动开火
       if (time - this.lastFire >= CONFIG.player.fireInterval) {
         this.lastFire = time;
@@ -648,17 +660,19 @@
       }
     }
 
-    // 按当前火力等级发射子弹（水平偏移 + 散射角度）
+    // 按当前火力等级发射子弹（水平偏移 + 散射角度）；僚机同步直射小弹
     fire() {
       const pattern = FIRE_PATTERNS[Math.min(this.power, FIRE_PATTERNS.length) - 1];
       for (const shot of pattern) {
         bullets.push(new Bullet(this.x + shot.ox, this.y - this.h / 2, shot.a));
       }
+      for (const o of this.options) o.fire();
     }
 
     draw(time) {
       // 无敌期间闪烁
       if (time < this.invincibleUntil && Math.floor(time / 90) % 2 === 0) return;
+      for (const o of this.options) o.draw(time); // 僚机先画，机身覆盖其上，闪烁与机身同步
       const { x, y, w, h } = this;
       ctx.save();
       ctx.translate(x, y);
@@ -727,9 +741,10 @@
   }
 
   class Bullet {
-    constructor(x, y, angle = 0) {
-      this.w = CONFIG.bullet.width;
-      this.h = CONFIG.bullet.height;
+    constructor(x, y, angle = 0, small = false) {
+      this.small = small; // 僚机小弹：更细更短，青色以示区分
+      this.w = small ? CONFIG.option.bulletW : CONFIG.bullet.width;
+      this.h = small ? CONFIG.option.bulletH : CONFIG.bullet.height;
       this.x = x; this.y = y;
       const s = CONFIG.bullet.speed;
       this.vx = Math.sin(angle) * s;
@@ -737,11 +752,51 @@
     }
     update(dt) { this.x += this.vx * dt; this.y += this.vy * dt; }
     draw() {
-      ctx.fillStyle = '#ffe066';
-      ctx.shadowColor = '#ffe066';
+      const c = this.small ? '#7fd0ff' : '#ffe066';
+      ctx.fillStyle = c;
+      ctx.shadowColor = c;
       ctx.shadowBlur = 8;
       ctx.fillRect(this.x - this.w / 2, this.y - this.h / 2, this.w, this.h);
       ctx.shadowBlur = 0;
+    }
+  }
+
+  // 僚机（Option）：满级火力后吃 P 转化的小型浮游炮，阻尼跟随并随主炮同步开火。
+  // 无敌、无碰撞判定；无绝对时间戳计时器（暂停无需平移处理）。
+  class Option {
+    constructor(side) { // side: -1 左侧 / +1 右侧
+      this.side = side;
+      this.w = 14; this.h = 14;
+      this.x = player.x + side * CONFIG.option.offsetX;
+      this.y = player.y + side * CONFIG.option.offsetY;
+      this.phase = rand(0, Math.PI * 2);
+    }
+
+    update(dt) {
+      // 向目标点插值：快移时略微拖后，形成"编队感"
+      const tx = player.x + this.side * CONFIG.option.offsetX;
+      const ty = player.y + this.side * CONFIG.option.offsetY;
+      this.x += (tx - this.x) * CONFIG.option.followEase * dt;
+      this.y += (ty - this.y) * CONFIG.option.followEase * dt;
+    }
+
+    fire() {
+      bullets.push(new Bullet(this.x, this.y - this.h / 2, 0, true));
+    }
+
+    draw(time) {
+      const pulse = 1 + Math.sin(time / 160 + this.phase) * 0.12;
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.scale(pulse, pulse);
+      ctx.shadowColor = '#7fd0ff';
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = '#4aa3ff';
+      ctx.beginPath(); ctx.arc(0, 0, this.w / 2, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#d6ecff';
+      ctx.beginPath(); ctx.arc(0, 0, this.w / 2 * 0.45, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
     }
   }
 
@@ -1209,8 +1264,12 @@
           if (player.power < CONFIG.player.maxPower) {
             player.power++;
             floatText(p.x, p.y - 10, '火力 +1', '#ffd24a');
+          } else if (player.options.length < CONFIG.option.maxCount) {
+            // 满级吃 P 优先转化僚机（先左后右），僚机满员才给奖励分
+            player.options.push(new Option(player.options.length === 0 ? -1 : 1));
+            floatText(p.x, p.y - 10, '僚机 +1', '#7fd0ff');
           } else {
-            addScore(CONFIG.powerup.bonusScore); // 满级时给予奖励分
+            addScore(CONFIG.powerup.bonusScore); // 满级满员时给予奖励分
             floatText(p.x, p.y - 10, '+' + CONFIG.powerup.bonusScore, '#ffe066');
           }
           SFX.powerup();

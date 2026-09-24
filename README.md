@@ -15,6 +15,7 @@
 - **纯图形绘制**：飞机、敌机、子弹、爆炸粒子全部用 Canvas 路径/多边形画出，零图片素材
 - **公平双控**：键盘与鼠标/触摸速度对等；玩家受击用远小于机身的「判定核」，擦翼尖不死
 - **5 级火力**：单发 → 双发 → 三向 → 四发散射 → 五向宽散射；火力会随时间衰减，鼓励持续拾取
+- **僚机系统**：火力满级后再吃 P 逐台转化僚机（最多 2 台，阻尼跟随、随主炮同步开火），满员再吃给奖励分
 - **三种敌机**：侦察机 / 战斗机（瞄准开火）/ 重型机（扇形弹幕）
 - **Boss 关**：分数门槛登场，入场悬停巡航、三阶段弹幕、血条，击败掉落 P/S/B
 - **主动技能**：炸弹（清屏清弹）/ 护盾（6 秒免伤）
@@ -63,7 +64,7 @@ python3 -m http.server 8000
 ## 🧩 玩法要素
 
 **道具**（敌机击毁 / Boss 击败掉落）
-- 🟡 **P** 火力 +1（最高 5 级；满级再吃给奖励分；不拾取会随时间降级）
+- 🟡 **P** 火力 +1（最高 5 级；满级再吃先转化为僚机，僚机满 2 台后给奖励分；不拾取会随时间降级）
 - 🟢 **S** 护盾，6 秒免伤
 - 🟠 **B** 炸弹 +1（最高 3 颗；满库存再吃给奖励分）
 
@@ -94,7 +95,7 @@ airplane/
 | `AUDIO` | WebAudio 音效合成 + 双曲目 BGM 调度 |
 | `INPUT` | 键盘 / 鼠标 / 多点触摸统一输入 |
 | `STATE` | 状态机（MENU / PLAYING / PAUSED / GAMEOVER） |
-| `ENTITY` | Player / Bullet / Enemy / EnemyBullet / PowerUp / Boss |
+| `ENTITY` | Player / Bullet / Option / Enemy / EnemyBullet / PowerUp / Boss |
 | `UPDATE` / `RENDER` / `LOOP` | 每帧逻辑与绘制、`requestAnimationFrame` 主循环 |
 
 ---
@@ -104,6 +105,7 @@ airplane/
 所有数值都集中在 `game.js` 顶部的 `CONFIG` 对象，无需翻代码即可调整游戏手感，例如：
 
 - `player.speed` / `fireInterval` — 移动与射速
+- `option.maxCount` / `followEase` — 僚机数量与跟随手感
 - `player.hitW` / `hitH` — 判定核大小（越小越硬核）
 - `enemy.spawnInterval` / `wave.duration` — 刷怪密度与波次节奏
 - `boss.firstScore` / `baseHp` — Boss 登场时机与血量
