@@ -22,7 +22,7 @@ node --check game.js
 
 ## 架构（game.js，单一 IIFE，按注释分区）
 
-`CONFIG` → `FIRE_PATTERNS`/`ENEMY_TYPES`/`POWERUP_TYPES`（数据表）→ `AUDIO` → `INPUT` → `STATE` → `ENTITY` → `UPDATE` → `RENDER` → `LOOP`。新增代码放进对应分区；新增敌机/道具/弹幕优先在数据表加条目再接分支处理。
+`CONFIG` → `FIRE_PATTERNS`/`ENEMY_TYPES`/`POWERUP_TYPES`/`FORMATIONS`（数据表）→ `AUDIO` → `INPUT` → `STATE` → `ENTITY` → `UPDATE` → `RENDER` → `LOOP`。新增代码放进对应分区；新增敌机/道具/弹幕优先在数据表加条目再接分支处理。
 
 需要跨分区理解的关键机制：
 

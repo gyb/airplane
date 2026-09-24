@@ -16,7 +16,8 @@ A vertical-scrolling shoot-'em-up built from scratch with **HTML5 Canvas + vanil
 - **Fair dual control**: keyboard and mouse/touch move at the same capped speed; the player's hitbox is a tiny "core" far smaller than the ship, so wing/nose grazes don't kill you
 - **5-level firepower**: single → twin → 3-way → 4-way spread → 5-way wide spread; power decays over time to keep pickups meaningful
 - **Wingman (option) system**: extra P pickups at max power convert into wingmen (up to 2) that trail your ship and fire alongside it; further picks give bonus score; all wingmen are destroyed when you get hit
-- **Three enemy types**: scout / fighter (aimed shots) / heavy (bullet-fan barrage)
+- **Five enemy types**: scout / fighter (aimed shots) / heavy (bullet-fan barrage) / diver (lock-on dive) / turret (hovering volley)
+- **Enemy formations**: V-wedge / column / side sweep / gap-line barricades unlock as waves advance, interleaved with single spawns
 - **Boss fights**: spawns at a score threshold, descends and hovers with a patrol pattern, three attack phases, health bar; drops P/S/B on defeat
 - **Active skills**: bomb (screen/bullet clear) / shield (6s invulnerability)
 - **Hit feedback**: getting hit triggers screen shake, a red flash, explosion particles and clear floating text, plus a brief mercy shield to recover
@@ -73,6 +74,8 @@ Design note: **movement and bombing are decoupled** — on mouse ("move = positi
 - 🟥 Scout — fast, fragile, doesn't shoot
 - 🟪 Fighter — 3 HP, fires aimed shots (stops firing once it passes you)
 - 🟩 Heavy — 7 HP, 5-way bullet fan, higher drop rate
+- 🟧 Diver — 1 HP, dives at your position once within range above you (commits to the dive, sidestep to dodge)
+- ⬜ Turret — 10 HP, hovers for ~6s firing 3-way volleys, then accelerates away; appears at higher waves
 
 **Boss**: appears when your score crosses the threshold (default 1200), with three escalating phases (single → 3-way → 5-way fan). Defeating it drops one each of P/S/B plus a big score reward.
 
@@ -92,7 +95,7 @@ airplane/
 | Section | Responsibility |
 |---------|----------------|
 | `CONFIG` | every tunable value (sizes / speeds / odds / HP / BPM…) lives here |
-| `ENEMY_TYPES` / `POWERUP_TYPES` / `FIRE_PATTERNS` | enemy / pickup / firepower data |
+| `ENEMY_TYPES` / `POWERUP_TYPES` / `FIRE_PATTERNS` / `FORMATIONS` | enemy / pickup / firepower / formation data |
 | `AUDIO` | Web Audio SFX synthesis + dual-track BGM scheduler |
 | `INPUT` | unified keyboard / mouse / multi-touch input |
 | `STATE` | state machine (MENU / PLAYING / PAUSED / GAMEOVER) |
@@ -109,6 +112,7 @@ All values live in the `CONFIG` object at the top of `game.js` — adjust game f
 - `option.maxCount` / `followEase` — wingman count and trailing feel
 - `player.hitW` / `hitH` — hitbox core size (smaller = more hardcore)
 - `enemy.spawnInterval` / `wave.duration` — spawn density and wave pacing
+- `formation.chance` / `cooldown` — formation trigger odds and spacing
 - `boss.firstScore` / `baseHp` — boss timing and health
 - `skills.shieldDuration` / `bombDamage` — skill strength
 - `player.hurtShieldDuration` / `hurtShake` — mercy shield duration and hit shake strength

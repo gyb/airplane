@@ -46,6 +46,11 @@
     enemy: {
       spawnInterval: 820   // 基础生成间隔（毫秒），随分数递增而缩短
     },
+    formation: {
+      chance: 0.16,      // 刷怪点改出编队的概率（需过 minWave 且冷却结束）
+      minWave: 2,        // 编队最早登场波次（各队形另有自己的 minWave）
+      cooldown: 5200     // 两个编队之间的最小间隔（毫秒）
+    },
     enemyBullet: {
       speed: 4.3           // 敌弹速度（比玩家子弹慢，便于躲避）
     },
@@ -84,14 +89,24 @@
     [{ ox: 0, a: 0 }, { ox: -10, a: -0.12 }, { ox: 10, a: 0.12 }, { ox: -16, a: -0.26 }, { ox: 16, a: 0.26 }] // Lv5 五向宽散射
   ];
 
-  // 敌机类型：hp 血量 · speed 下落速度 · sway 摇摆幅度 · score 分数 · fireInterval 开火间隔(空则不开火)
+  // 敌机类型：hp 血量 · speed 下落速度 · sway 摇摆幅度 · score 分数
+  //   fireInterval 开火间隔(空则不开火) · fan 扇形弹幕(n 发/张角，空则单发瞄准)
+  //   dive 自爆锁定(俯冲触发) · hover 悬浮炮悬停(入场→悬停开火→撤离)
   const ENEMY_TYPES = {
     scout:   { w: 34, h: 32, hp: 1, speed: 3.0, sway: 0.6, score: 10,
                color: '#ff6a4a', color2: '#a8311f', cockpit: '#3a0d12' },
     fighter: { w: 42, h: 42, hp: 3, speed: 1.9, sway: 0.4, score: 30,
                color: '#c060d8', color2: '#6a2a7a', cockpit: '#2a0d33', fireInterval: 1500 },
     heavy:   { w: 60, h: 56, hp: 7, speed: 1.1, sway: 0.25, score: 70,
-               color: '#5fae5f', color2: '#2f5f2f', cockpit: '#102210', fireInterval: 2100 }
+               color: '#5fae5f', color2: '#2f5f2f', cockpit: '#102210', fireInterval: 2100,
+               fan: { n: 5, spread: 0.55 } },
+    diver:   { w: 30, h: 34, hp: 1, speed: 2.3, sway: 0.5, score: 20,
+               color: '#ffb13b', color2: '#b35900', cockpit: '#331a00',
+               dive: { minY: 80, range: 78, speed: 6.5 } },
+    turret:  { w: 46, h: 40, hp: 10, speed: 1.4, sway: 0, score: 100,
+               color: '#8a97b8', color2: '#4a5570', cockpit: '#101830',
+               fireInterval: 1500, fan: { n: 3, spread: 0.28 },
+               hover: { yMin: 100, yMax: 210, frames: 380 } }
   };
 
   // 道具类型：power 火力 / shield 护盾 / bomb 炸弹
@@ -100,6 +115,47 @@
     shield: { color: '#39e6c8', glow: '#5fffe0', inner: '#d8fff7', ink: '#0a4a40', label: 'S' },
     bomb:   { color: '#ff7a3b', glow: '#ffb066', inner: '#ffe2cc', ink: '#5a1d00', label: 'B' }
   };
+
+  // 编队定义：minWave 登场波次 · weight 抽取权重 · make() 生成成员表。
+  // 成员字段：delay 入场延迟(毫秒) · x/y 入场位置 · vx 侧向速度 · speedMul 下落速度倍率
+  //           · swayMul 摇摆倍率（编队成员调小/归零以保持队形） · type 敌机类型
+  const FORMATIONS = [
+    { key: 'wedge', minWave: 2, weight: 3, // V 字楔形：机头先行，双翼依次拖后
+      make() {
+        const cx = rand(W * 0.3, W * 0.7);
+        return [
+          { delay: 0,   x: cx,      type: 'scout', swayMul: 0.15 },
+          { delay: 90,  x: cx - 30, type: 'scout', swayMul: 0.15 },
+          { delay: 90,  x: cx + 30, type: 'scout', swayMul: 0.15 },
+          { delay: 180, x: cx - 60, type: 'scout', swayMul: 0.15 },
+          { delay: 180, x: cx + 60, type: 'scout', swayMul: 0.15 }
+        ];
+      } },
+    { key: 'column', minWave: 3, weight: 3, // 纵列：同一 x 鱼贯而入（wave≥4 换成会开火的战斗机）
+      make() {
+        const x = rand(W * 0.2, W * 0.8);
+        const type = wave >= 4 ? 'fighter' : 'scout';
+        return [0, 1, 2, 3, 4].map(i => ({ delay: i * 240, x, type, swayMul: 0 }));
+      } },
+    { key: 'sweep', minWave: 3, weight: 2, // 侧向突入：从一侧斜切过屏幕上半部
+      make() {
+        const dir = Math.random() < 0.5 ? 1 : -1; // 1 = 从左向右
+        const y = rand(90, 170);
+        return [0, 1, 2, 3].map(i => ({
+          delay: i * 230, x: dir > 0 ? -24 : W + 24, y,
+          vx: dir * 2.4, speedMul: 0.45, type: 'scout', swayMul: 0
+        }));
+      } },
+    { key: 'line', minWave: 4, weight: 2, // 横排封锁线：整排压下但必留一个缺口可穿
+      make() {
+        const n = 6, gap = (Math.random() * n) | 0, arr = [];
+        for (let i = 0; i < n; i++) {
+          if (i === gap) continue;
+          arr.push({ delay: 0, x: W * (i + 0.5) / n, type: 'scout', swayMul: 0 });
+        }
+        return arr;
+      } }
+  ];
 
   // ================= SETUP =================
   const canvas = document.getElementById('game');
@@ -131,16 +187,27 @@
   const BOMB_BTN = { x: W - 46, y: H - 46, r: 32 };
   function inBombButton(x, y) { return Math.hypot(x - BOMB_BTN.x, y - BOMB_BTN.y) < BOMB_BTN.r; }
 
-  // 按当前波次加权选择敌机类型（波次越高，重型机越多）
+  // 按当前波次加权选择敌机类型（波次越高，重型机/自爆机/悬浮炮越多）
   function pickEnemyType() {
     let w;
-    if (wave < 3)      w = { scout: 0.82, fighter: 0.18, heavy: 0.00 };
-    else if (wave < 6) w = { scout: 0.55, fighter: 0.36, heavy: 0.09 };
-    else               w = { scout: 0.40, fighter: 0.42, heavy: 0.18 };
+    if (wave < 3)      w = { scout: 0.82, fighter: 0.18 };
+    else if (wave < 6) w = { scout: 0.50, fighter: 0.30, diver: 0.14, heavy: 0.06 };
+    else               w = { scout: 0.34, fighter: 0.36, diver: 0.14, heavy: 0.10, turret: 0.06 };
     const r = Math.random();
     let acc = 0;
     for (const k of Object.keys(w)) { acc += w[k]; if (r <= acc) return k; }
     return 'scout';
+  }
+
+  // 抽一个当前波次可用的编队，全部成员排入待入场队列
+  function queueFormation() {
+    const pool = FORMATIONS.filter(f => wave >= f.minWave);
+    let total = 0;
+    for (const f of pool) total += f.weight;
+    let r = Math.random() * total;
+    let pick = pool[0];
+    for (const f of pool) { r -= f.weight; if (r <= 0) { pick = f; break; } }
+    for (const m of pick.make()) pendingSpawns.push(m);
   }
 
   // ================= AUDIO =================
@@ -432,6 +499,8 @@
   let newRecord = false;      // 本局是否打破最高分
   const DIFF = { spawnInterval: CONFIG.enemy.spawnInterval, enemySpeedMul: 1, fireMul: 1 };
   let spawnAcc = 0;
+  let pendingSpawns = [];  // 编队待入场成员（Boss 在场时冻结出队）
+  let formationCd = 0;     // 编队冷却（毫秒累计，仅更新中递减 → 暂停安全）
   let lastTime = 0;
   let pausedAt = 0;       // 进入暂停时的时间戳（用于恢复时平移计时器）
   let flashScreen = 0;    // 炸弹引爆时的全屏闪光强度（0~1）
@@ -479,6 +548,8 @@
     newRecord = false;
     recomputeDiff();
     spawnAcc = 0;
+    pendingSpawns = [];
+    formationCd = 0;
   }
 
   function startGame() {
@@ -815,27 +886,71 @@
   }
 
   class Enemy {
-    constructor(type) {
+    constructor(type, opts = {}) {
       const t = ENEMY_TYPES[type];
       this.type = type;
       this.def = t;
       this.w = t.w; this.h = t.h;
-      this.x = rand(this.w / 2, W - this.w / 2);
-      this.y = -this.h / 2;
+      this.x = opts.x !== undefined ? opts.x : rand(this.w / 2, W - this.w / 2);
+      this.y = opts.y !== undefined ? opts.y : -this.h / 2;
       this.hp = t.hp;
       this.maxHp = t.hp;
-      this.speed = t.speed;
+      this.speed = t.speed * (opts.speedMul !== undefined ? opts.speedMul : 1);
       this.scoreVal = t.score;
       this.phase = rand(0, Math.PI * 2);
-      this.flash = 0;      // 受击白闪计时
+      this.sway = t.sway * (opts.swayMul !== undefined ? opts.swayMul : 1); // 编队成员可调小摇摆保持队形
+      this.vx = opts.vx || 0;   // 侧向速度（编队侧向突入；自爆锁定后复用）
+      this.locked = false;      // 自爆机：已锁定俯冲
+      this.diveVy = 0;          // 自爆机：俯冲垂直速度
+      this.flash = 0;           // 受击白闪计时
       this.nextFire = undefined; // 首次开火时间（惰性赋值以错开节奏）
     }
 
     update(dt, time) {
-      this.y += this.speed * DIFF.enemySpeedMul * dt;
-      this.x += Math.sin(this.phase + this.y * 0.03) * this.def.sway * dt; // 左右摇摆
-      this.x = clamp(this.x, this.w / 2, W - this.w / 2);
       this.flash = Math.max(0, this.flash - 0.08 * dt);
+
+      // 自爆机已锁定：朝锁定瞬间玩家所在处直线俯冲（不追踪，侧移可躲）
+      if (this.locked) {
+        this.x += this.vx * dt;
+        this.y += this.diveVy * dt;
+        if (Math.random() < 0.6) explode(this.x, this.y, '#ffb13b', 1); // 俯冲尾焰
+        return;
+      }
+
+      // 悬浮炮：入场 → 悬停扫射 → 加速撤离（this.t 为帧累计，暂停安全）
+      if (this.def.hover) {
+        if (this.hoverY === undefined) {
+          this.hoverY = rand(this.def.hover.yMin, this.def.hover.yMax);
+          this.t = 0;
+          this.nextFire = time + 500; // 到位后稍作停顿再开火
+        }
+        if (this.leaving) { this.y += 2.6 * DIFF.enemySpeedMul * dt; return; }
+        if (this.y < this.hoverY) { this.y += this.speed * DIFF.enemySpeedMul * dt; return; }
+        this.t += dt;
+        this.x = clamp(this.x + Math.sin(this.t * 0.03) * 0.5 * dt, this.w / 2, W - this.w / 2); // 缓慢横移
+        if (this.t > this.def.hover.frames) { this.leaving = true; return; }
+        if (time >= this.nextFire) {
+          this.nextFire = time + this.def.fireInterval * DIFF.fireMul;
+          this.fire();
+        }
+        return;
+      }
+
+      // 普通下落（含编队侧向漂移 vx；有侧向速度时不钳制，允许穿出屏幕）
+      this.y += this.speed * DIFF.enemySpeedMul * dt;
+      this.x += (Math.sin(this.phase + this.y * 0.03) * this.sway + this.vx) * dt;
+      if (!this.vx) this.x = clamp(this.x, this.w / 2, W - this.w / 2);
+
+      // 自爆锁定检测：飞到玩家上方水平范围内，朝玩家当前位置发起俯冲
+      if (this.def.dive && this.y > this.def.dive.minY && this.y < player.y - 50 &&
+          Math.abs(player.x - this.x) < this.def.dive.range) {
+        const dx = player.x - this.x, dy = player.y - this.y;
+        const d = Math.hypot(dx, dy) || 1;
+        this.vx = dx / d * this.def.dive.speed;
+        this.diveVy = dy / d * this.def.dive.speed;
+        this.locked = true;
+        return;
+      }
 
       // 开火：仅在尚未越过玩家（位于玩家上方）时开火，避免越过后往回射击
       if (this.def.fireInterval && this.y < player.y) {
@@ -850,14 +965,14 @@
       }
     }
 
-    // 战斗机单发瞄准；重型机 5 发扇形弹幕
+    // 扇形弹幕机种（fan: n 发/张角）朝玩家定向散射；其余单发瞄准
     fire() {
       const speed = CONFIG.enemyBullet.speed;
       const ox = this.x, oy = this.y + this.h / 2;
       const dx = player.x - ox, dy = player.y - oy;
-      if (this.type === 'heavy') {
+      if (this.def.fan) {
+        const { n, spread } = this.def.fan;
         const base = Math.atan2(dy, dx);
-        const n = 5, spread = 0.55;
         for (let i = 0; i < n; i++) {
           const a = base - spread / 2 + spread * (i / (n - 1));
           enemyBullets.push(new EnemyBullet(ox, oy, Math.cos(a) * speed, Math.sin(a) * speed));
@@ -868,8 +983,9 @@
       }
     }
 
-    draw() {
+    draw(time) {
       const { x, y, w, h } = this;
+      const hot = this.locked && Math.floor(time / 80) % 2 === 0; // 自爆俯冲中白热闪烁警示
       ctx.save();
       ctx.translate(x, y);
       // 机翼
@@ -882,7 +998,7 @@
       ctx.lineTo(-w * 0.22, -h * 0.3);
       ctx.closePath(); ctx.fill();
       // 机身（机头朝下）
-      ctx.fillStyle = this.def.color;
+      ctx.fillStyle = hot ? '#ffffff' : this.def.color;
       ctx.beginPath();
       ctx.moveTo(0, h * 0.5);
       ctx.lineTo(w * 0.14, -h * 0.3);
@@ -1166,12 +1282,28 @@
     // Boss 更新
     if (boss) boss.update(dt, time);
 
-    // 普通敌机生成（Boss 在场时暂停，专注 1v1）
+    // 普通敌机生成（Boss 在场时暂停，专注 1v1；编队队列同样冻结）
     if (!boss) {
+      formationCd = Math.max(0, formationCd - dms);
       spawnAcc += dms;
       if (spawnAcc >= DIFF.spawnInterval) {
         spawnAcc -= DIFF.spawnInterval;
-        enemies.push(new Enemy(pickEnemyType()));
+        if (wave >= CONFIG.formation.minWave && pendingSpawns.length === 0 &&
+            formationCd <= 0 && Math.random() < CONFIG.formation.chance) {
+          queueFormation(); // 本点改出编队，成员将按各自延迟陆续入场
+          formationCd = CONFIG.formation.cooldown;
+        } else {
+          enemies.push(new Enemy(pickEnemyType()));
+        }
+      }
+      // 编队成员到点入场
+      for (let i = pendingSpawns.length - 1; i >= 0; i--) {
+        const s = pendingSpawns[i];
+        s.delay -= dms;
+        if (s.delay <= 0) {
+          enemies.push(new Enemy(s.type, s));
+          pendingSpawns.splice(i, 1);
+        }
       }
     }
 
@@ -1189,10 +1321,11 @@
       if (eb.y > H + 10 || eb.y < -10 || eb.x < -10 || eb.x > W + 10) enemyBullets.splice(i, 1);
     }
 
-    // 敌机
+    // 敌机（侧向突入/俯冲漏过的会从左右穿出屏幕）
     for (let i = enemies.length - 1; i >= 0; i--) {
-      enemies[i].update(dt, time);
-      if (enemies[i].y - enemies[i].h / 2 > H) enemies.splice(i, 1);
+      const e = enemies[i];
+      e.update(dt, time);
+      if (e.y - e.h / 2 > H || (e.vx && (e.x < -70 || e.x > W + 70))) enemies.splice(i, 1);
     }
 
     // 碰撞：玩家子弹 vs Boss（每发命中都扣血）
@@ -1327,7 +1460,7 @@
       for (const b of bullets) b.draw();
       for (const eb of enemyBullets) eb.draw();
       for (const pu of powerups) pu.draw(time);
-      for (const e of enemies) e.draw();
+      for (const e of enemies) e.draw(time);
       if (boss) boss.draw();
       player.draw(time);
     }
