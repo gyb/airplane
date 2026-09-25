@@ -67,6 +67,11 @@
     ui: {
       restartDelay: 1500 // 结束画面接受重开输入前的静置时长（毫秒），保护结算统计可读
     },
+    graze: {
+      radius: 32,      // 擦弹圈半径（判定核之外、视觉机身一带的环形区域）
+      score: 10,       // 每次擦弹得分（固定值，不吃连击倍率）
+      bombEvery: 30    // 擦弹攒槽：每擦 N 次奖励 1 颗炸弹（满库存转奖励分）
+    },
     skills: {
       shieldDuration: 6000, // 护盾持续时长（毫秒）
       bombDamage: 6,        // 炸弹对普通敌机的伤害
@@ -345,6 +350,7 @@
     shield() { tone(523, 0.1, { type: 'triangle', vol: 0.25 }); tone(784, 0.12, { type: 'triangle', vol: 0.25, delay: 0.08 }); tone(1046, 0.14, { type: 'triangle', vol: 0.25, delay: 0.16 }); },
     turret() { tone(200, 0.1, { type: 'square', vol: 0.2 }); tone(150, 0.16, { type: 'square', vol: 0.16, delay: 0.06 }); },
     dash() { noise(0.16, { vol: 0.22, freq: 2400, type: 'highpass' }); tone(300, 0.16, { type: 'sawtooth', vol: 0.12, slideTo: 90 }); },
+    graze() { tone(1400, 0.03, { type: 'triangle', vol: 0.07 }); }, // 极轻的擦弹提示音（调用处限流）
   };
 
   // ---- 背景音乐：卡农（D 大调）主旋律 + 地面低音，lookahead 调度循环 ----
@@ -626,6 +632,9 @@
   let maxCombo = 0;           // 本局最大连击（结算展示）
   let killCount = 0;          // 本局击破数（结算展示）
   let runTime = 0;            // 本局用时（毫秒，仅 PLAYING 态累计 → 暂停安全）
+  let grazeCount = 0;         // 本局擦弹总数（结算展示）
+  let grazeAcc = 0;           // 擦弹攒槽进度（满 CONFIG.graze.bombEvery 奖励炸弹）
+  let grazeSfxAt = 0;         // 擦弹音效限流时间戳（纯节流用，无需暂停平移）
   const DIFF = { spawnInterval: CONFIG.enemy.spawnInterval, enemySpeedMul: 1, fireMul: 1 };
   let spawnAcc = 0;
   let pendingSpawns = [];  // 编队待入场成员（Boss 在场时冻结出队）
@@ -688,6 +697,7 @@
     waveTimer = 0;
     newRecord = false;
     combo = 0; comboUntil = 0; maxCombo = 0; killCount = 0; runTime = 0;
+    grazeCount = 0; grazeAcc = 0;
     recomputeDiff();
     spawnAcc = 0;
     pendingSpawns = [];
@@ -1229,6 +1239,7 @@
       this.w = 8; this.h = 8;
       this.x = x; this.y = y;
       this.vx = vx; this.vy = vy;
+      this.grazed = false; // 已被擦过（每颗弹只计一次擦弹）
     }
     update(dt) { this.x += this.vx * dt; this.y += this.vy * dt; }
     draw() {
@@ -1704,6 +1715,32 @@
       }
     }
 
+    // 擦弹：敌弹进入擦弹圈（判定核之外、视觉机身一带）即记一次，每颗弹只记一次。
+    // 护盾/无敌期照常计——故意贴弹飞是高风险高回报玩法；正中判定核的弹不重复计数
+    for (const eb of enemyBullets) {
+      if (eb.grazed || hit(eb, player)) continue;
+      if (Math.hypot(eb.x - player.x, eb.y - player.y) < CONFIG.graze.radius) {
+        eb.grazed = true;
+        grazeCount++;
+        addScore(CONFIG.graze.score);
+        explode(eb.x, eb.y, '#7fd0ff', 2);
+        if (time - grazeSfxAt > 90) { grazeSfxAt = time; SFX.graze(); }
+        // 擦弹攒槽：攒满奖励炸弹（满库存转奖励分），贴弹风险与炸弹收益闭环
+        grazeAcc++;
+        if (grazeAcc >= CONFIG.graze.bombEvery) {
+          grazeAcc = 0;
+          if (player.bombs < CONFIG.skills.maxBombs) {
+            player.bombs++;
+            floatText(player.x, player.y - 34, '擦弹满槽 炸弹 +1', '#7fd0ff');
+          } else {
+            addScore(CONFIG.powerup.bonusScore);
+            floatText(player.x, player.y - 34, '擦弹满槽 +' + CONFIG.powerup.bonusScore, '#ffe066');
+          }
+          SFX.powerup();
+        }
+      }
+    }
+
     // 碰撞：敌弹 / 敌机 vs 玩家（无敌帧或护盾期间不受击）
     if (time > player.invincibleUntil && time > player.shieldUntil) {
       for (let i = enemyBullets.length - 1; i >= 0; i--) {
@@ -1949,6 +1986,16 @@
     ctx.font = 'bold 12px sans-serif';
     ctx.fillText('×' + (player ? player.bombs : 0), BOMB_BTN.x, BOMB_BTN.y + 12);
     ctx.restore();
+
+    // 擦弹攒槽进度：环绕炸弹按钮的青色圆弧（攒满的奖励就是炸弹，进度与奖励同处）
+    if (grazeAcc > 0) {
+      ctx.strokeStyle = '#7fd0ff';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(BOMB_BTN.x, BOMB_BTN.y, BOMB_BTN.r + 4,
+        -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (grazeAcc / CONFIG.graze.bombEvery));
+      ctx.stroke();
+    }
   }
 
   function drawMenu() {
@@ -1988,7 +2035,7 @@
     const clock = Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
     ctx.fillStyle = '#8aa0c8';
     ctx.font = '14px sans-serif';
-    ctx.fillText('击破 ' + killCount + ' · 最大连击 ×' + maxCombo + ' · 用时 ' + clock, W / 2, H / 2 + 22);
+    ctx.fillText('击破 ' + killCount + ' · 最大连击 ×' + maxCombo + ' · 擦弹 ' + grazeCount + ' · 用时 ' + clock, W / 2, H / 2 + 22);
     ctx.fillStyle = '#cfe2ff';
     ctx.font = '17px sans-serif';
     ctx.fillText('最高分 ' + highScore, W / 2, H / 2 + 52);

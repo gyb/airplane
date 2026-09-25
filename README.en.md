@@ -23,7 +23,8 @@ A vertical-scrolling shoot-'em-up built from scratch with **HTML5 Canvas + vanil
 - **Hit feedback**: getting hit triggers screen shake, a red flash, explosion particles and clear floating text, plus a brief mercy shield to recover
 - **Wave-based difficulty curve**: a new wave every 18s — enemies get denser, faster, and heavier
 - **Synthesized SFX + four BGM tracks**: calm Canon (D major) normally, plus one theme per boss — the flagship's D-minor march, the ring fortress's heavy dirge, the ramer's E-minor chase — all generated with the Web Audio API
-- **Combo scoring**: chain kills within 1.8s for up to ×3 kill score; resets when hit, bomb kills count too; the results screen shows kills / max combo / run time
+- **Combo scoring**: chain kills within 1.8s for up to ×3 kill score; resets when hit, bomb kills count too; the results screen shows kills / max combo / grazes / run time
+- **Graze scoring**: enemy shots grazing your hull (the ring outside the hitbox core) score points, even while shielded; every 30 grazes awards a bomb (bonus score if fully stocked), shown as a cyan arc around the bomb button
 - **Persistent high score**: saved in `localStorage` with a "new record" callout
 - **Pause / mute**: `P` to pause, `M` to mute
 - **Responsive**: adapts to desktop and mobile with multi-touch support
@@ -85,6 +86,8 @@ Design note: **movement and bombing are decoupled** — on mouse ("move = positi
 
 **Combo**: kills within 1.8s chain a combo; kill score is multiplied by `1 + combo × 0.1` (capped at ×3). Getting hit resets it; bomb kills count normally (turning a survival resource into a combo burst); boss kills are flat rewards outside the combo.
 
+**Graze**: an enemy bullet entering the graze ring around the hitbox core counts once per bullet for +10, accumulating even while shielded/invincible — flying close to danger is high risk, high reward. Every 30 grazes awards a bomb (100 bonus score if fully stocked).
+
 ---
 
 ## 📁 Project Structure
@@ -120,6 +123,7 @@ All values live in the `CONFIG` object at the top of `game.js` — adjust game f
 - `enemy.spawnInterval` / `wave.duration` — spawn density and wave pacing
 - `formation.chance` / `cooldown` — formation trigger odds and spacing
 - `combo.window` / `maxCount` — combo window and multiplier cap
+- `graze.radius` / `bombEvery` — graze ring size and bomb charge threshold
 - `boss.firstScore` / `gapScore` / `gapStep` — boss threshold and its per-level widening gap
 - `skills.shieldDuration` / `bombDamage` — skill strength
 - `player.hurtShieldDuration` / `hurtShake` — mercy shield duration and hit shake strength
