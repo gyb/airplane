@@ -74,7 +74,7 @@ Design note: **movement and bombing are decoupled** — on mouse ("move = positi
 - 🟥 Scout — fast, fragile, doesn't shoot
 - 🟪 Fighter — 3 HP, fires aimed shots (stops firing once it passes you)
 - 🟩 Heavy — 7 HP, 5-way bullet fan, higher drop rate
-- 🟧 Diver — 1 HP, dives at your position once within range above you (commits to the dive, sidestep to dodge)
+- 🟧 Diver — 1 HP, flanks in from the screen sides at your altitude (under your vertical fire line, so auto-fire can't hit it), locks onto your position, flashes for ~0.3s, then dashes at the locked spot (it never tracks — move to dodge)
 - ⬜ Turret — a 20 HP mini gun-platform: hovers for ~8s launching rotating bullet rings (each volley telegraphed by a red charge-up ring), then accelerates away; appears at higher waves and deserves priority fire
 
 **Boss (three types rotating by level)**: appears when your score crosses the threshold (default 1200, with each gap widening arithmetically); HP scales with level, three escalating phases, and each defeat drops one each of P/S/B plus a big score reward.

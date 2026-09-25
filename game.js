@@ -104,7 +104,9 @@
                fan: { n: 5, spread: 0.55 } },
     diver:   { w: 30, h: 34, hp: 1, speed: 2.3, sway: 0.5, score: 20,
                color: '#ffb13b', color2: '#b35900', cockpit: '#331a00',
-               dive: { minY: 80, range: 78, speed: 6.5 } },
+               // 侧翼突入：从屏幕侧面贴近玩家高度横向逼近（走在垂直火力线下方），
+               // 接近后锁定玩家当前位置、闪烁蓄力 windup 帧再冲刺
+               dive: { range: 110, speed: 6.5, windup: 18 } },
     turret:  { w: 50, h: 44, hp: 20, speed: 1.4, sway: 0, score: 150,
                color: '#8a97b8', color2: '#4a5570', cockpit: '#ff5a4a',
                fireInterval: 1300,
@@ -239,6 +241,20 @@
     let acc = 0;
     for (const k of Object.keys(w)) { acc += w[k]; if (r <= acc) return k; }
     return 'scout';
+  }
+
+  // 自爆机侧翼突入：从屏幕左右侧、贴着玩家高度带横向往玩家方向逼近。
+  // （若沿用顶部进场俯冲，1 血机身必然穿过玩家垂直火力线被自动拦截，自爆不成立）
+  function spawnDiver() {
+    const dir = Math.random() < 0.5 ? 1 : -1; // 1 = 从左向右
+    const y = clamp(player.y - rand(60, 160), 150, H - 80);
+    enemies.push(new Enemy('diver', {
+      x: dir > 0 ? -20 : W + 20,
+      y,
+      vx: dir * 2.6,        // 横向巡航
+      speedMul: 0.35,       // 缓慢下沉
+      swayMul: 0.3
+    }));
   }
 
   // 抽一个当前波次可用的编队，全部成员排入待入场队列
@@ -1000,9 +1016,11 @@
       this.scoreVal = t.score;
       this.phase = rand(0, Math.PI * 2);
       this.sway = t.sway * (opts.swayMul !== undefined ? opts.swayMul : 1); // 编队成员可调小摇摆保持队形
-      this.vx = opts.vx || 0;   // 侧向速度（编队侧向突入；自爆锁定后复用）
-      this.locked = false;      // 自爆机：已锁定俯冲
-      this.diveVy = 0;          // 自爆机：俯冲垂直速度
+      this.vx = opts.vx || 0;   // 侧向速度（编队侧向突入；自爆机巡航用）
+      this.locked = false;      // 自爆机：已锁定
+      this.lockT = 0;           // 自爆机：锁定后的蓄力帧数
+      this.dashVx = 0;          // 自爆机：冲刺水平速度
+      this.diveVy = 0;          // 自爆机：冲刺垂直速度
       this.bursts = 0;          // 悬浮炮：已发射的环形弹幕轮数（用于逐轮旋转）
       this.flash = 0;           // 受击白闪计时
       this.nextFire = undefined; // 首次开火时间（惰性赋值以错开节奏）
@@ -1011,11 +1029,19 @@
     update(dt, time) {
       this.flash = Math.max(0, this.flash - 0.08 * dt);
 
-      // 自爆机已锁定：朝锁定瞬间玩家所在处直线俯冲（不追踪，侧移可躲）
+      // 自爆机已锁定：先闪烁蓄力示警（公平预警），蓄力满后朝锁定位置直线冲刺。
+      // 冲刺向量在锁定瞬间捕获、不追踪——蓄力+冲刺期间移动即可躲开
       if (this.locked) {
-        this.x += this.vx * dt;
-        this.y += this.diveVy * dt;
-        if (Math.random() < 0.6) explode(this.x, this.y, '#ffb13b', 1); // 俯冲尾焰
+        this.lockT += dt;
+        if (this.lockT >= this.def.dive.windup) {
+          this.x += this.dashVx * dt;
+          this.y += this.diveVy * dt;
+          if (Math.random() < 0.6) explode(this.x, this.y, '#ffb13b', 1); // 冲刺尾焰
+        } else {
+          // 蓄力期间继续减速侧滑逼近，制造压迫
+          this.x += this.vx * 0.5 * dt;
+          this.y += this.speed * DIFF.enemySpeedMul * dt;
+        }
         return;
       }
 
@@ -1050,14 +1076,15 @@
       this.x += (Math.sin(this.phase + this.y * 0.03) * this.sway + this.vx) * dt;
       if (!this.vx) this.x = clamp(this.x, this.w / 2, W - this.w / 2);
 
-      // 自爆锁定检测：飞到玩家上方水平范围内，朝玩家当前位置发起俯冲
-      if (this.def.dive && this.y > this.def.dive.minY && this.y < player.y - 50 &&
+      // 自爆锁定检测：横向逼近到范围内且未低于玩家，即锁定玩家当前位置
+      if (this.def.dive && this.y < player.y + 40 &&
           Math.abs(player.x - this.x) < this.def.dive.range) {
         const dx = player.x - this.x, dy = player.y - this.y;
         const d = Math.hypot(dx, dy) || 1;
-        this.vx = dx / d * this.def.dive.speed;
+        this.dashVx = dx / d * this.def.dive.speed;
         this.diveVy = dy / d * this.def.dive.speed;
         this.locked = true;
+        this.lockT = 0;
         return;
       }
 
@@ -1102,9 +1129,16 @@
 
     draw(time) {
       const { x, y, w, h } = this;
-      const hot = this.locked && Math.floor(time / 80) % 2 === 0; // 自爆俯冲中白热闪烁警示
+      const hot = this.locked && Math.floor(time / 80) % 2 === 0; // 自爆锁定后白热闪烁示警
       ctx.save();
       ctx.translate(x, y);
+      // 自爆机机头始终朝向行进方向（侧向巡航 / 锁定冲刺），其余敌机保持机头朝下
+      if (this.def.dive) {
+        const dashing = this.locked && this.lockT >= this.def.dive.windup;
+        const dxv = dashing ? this.dashVx : this.vx;
+        const dyv = dashing ? this.diveVy : this.speed * DIFF.enemySpeedMul;
+        if (dxv || dyv) ctx.rotate(Math.atan2(dxv, dyv)); // 机头默认朝 +y，旋到行进方向
+      }
       // 机翼
       ctx.fillStyle = this.def.color2;
       ctx.beginPath();
@@ -1559,7 +1593,9 @@
           queueFormation(); // 本点改出编队，成员将按各自延迟陆续入场
           formationCd = CONFIG.formation.cooldown;
         } else {
-          enemies.push(new Enemy(pickEnemyType()));
+          const type = pickEnemyType();
+          if (type === 'diver') spawnDiver(); // 自爆机走侧翼突入路线
+          else enemies.push(new Enemy(type));
         }
       }
       // 编队成员到点入场
