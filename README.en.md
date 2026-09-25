@@ -23,6 +23,7 @@ A vertical-scrolling shoot-'em-up built from scratch with **HTML5 Canvas + vanil
 - **Hit feedback**: getting hit triggers screen shake, a red flash, explosion particles and clear floating text, plus a brief mercy shield to recover
 - **Wave-based difficulty curve**: a new wave every 18s — enemies get denser, faster, and heavier
 - **Synthesized SFX + four BGM tracks**: calm Canon (D major) normally, plus one theme per boss — the flagship's D-minor march, the ring fortress's heavy dirge, the ramer's E-minor chase — all generated with the Web Audio API
+- **Combo scoring**: chain kills within 2.2s for up to ×3 kill score; resets when hit, bomb kills count too; the results screen shows kills / max combo / run time
 - **Persistent high score**: saved in `localStorage` with a "new record" callout
 - **Pause / mute**: `P` to pause, `M` to mute
 - **Responsive**: adapts to desktop and mobile with multi-touch support
@@ -82,6 +83,8 @@ Design note: **movement and bombing are decoupled** — on mouse ("move = positi
 - 🟦 **Ring Fortress** — a hovering ring that drifts (faster as it takes damage) with all-direction fire: rotating rings → twin offset rings → twin-arm spiral stream + dense rings; extra HP since it sits still
 - 🟪 **Ramer** — telegraphs (flashing), then dashes across the screen (ramming hurts!); drops slow bullets along its dash forming walls you must gap through; its pauses are your damage windows; lower HP since it never stops moving
 
+**Combo**: kills within 2.2s chain a combo; kill score is multiplied by `1 + combo × 0.1` (capped at ×3). Getting hit resets it; bomb kills count normally (turning a survival resource into a combo burst); boss kills are flat rewards outside the combo.
+
 ---
 
 ## 📁 Project Structure
@@ -116,6 +119,7 @@ All values live in the `CONFIG` object at the top of `game.js` — adjust game f
 - `player.hitW` / `hitH` — hitbox core size (smaller = more hardcore)
 - `enemy.spawnInterval` / `wave.duration` — spawn density and wave pacing
 - `formation.chance` / `cooldown` — formation trigger odds and spacing
+- `combo.window` / `maxCount` — combo window and multiplier cap
 - `boss.firstScore` / `gapScore` / `gapStep` — boss threshold and its per-level widening gap
 - `skills.shieldDuration` / `bombDamage` — skill strength
 - `player.hurtShieldDuration` / `hurtShake` — mercy shield duration and hit shake strength

@@ -59,6 +59,11 @@
       fallSpeed: 1.6,     // 道具下落速度（每帧像素）
       bonusScore: 100     // 火力满级时拾取给予的奖励分
     },
+    combo: {
+      window: 2200,     // 连击维持窗口（毫秒）：距上次击杀超过即断
+      maxCount: 20,     // 倍率封顶对应的连击数
+      step: 0.1         // 每点连击增加的得分倍率（封顶 ×3）
+    },
     skills: {
       shieldDuration: 6000, // 护盾持续时长（毫秒）
       bombDamage: 6,        // 炸弹对普通敌机的伤害
@@ -613,6 +618,11 @@
   let waveTimer = 0;          // 当前波次累计时间（毫秒）
   let highScore = 0;          // 历史最高分（localStorage 持久化）
   let newRecord = false;      // 本局是否打破最高分
+  let combo = 0;              // 当前连击数（击杀间隔 < 窗口则延续）
+  let comboUntil = 0;         // 连击到期时间戳（绝对时间，需进 togglePause 平移）
+  let maxCombo = 0;           // 本局最大连击（结算展示）
+  let killCount = 0;          // 本局击破数（结算展示）
+  let runTime = 0;            // 本局用时（毫秒，仅 PLAYING 态累计 → 暂停安全）
   const DIFF = { spawnInterval: CONFIG.enemy.spawnInterval, enemySpeedMul: 1, fireMul: 1 };
   let spawnAcc = 0;
   let pendingSpawns = [];  // 编队待入场成员（Boss 在场时冻结出队）
@@ -646,6 +656,17 @@
     if (score > highScore) { highScore = score; newRecord = true; }
   }
 
+  // 击杀结算：连击 +1 并刷新窗口，按当前倍率加分。
+  // 炸弹击杀照常计入（资源有界=爆发博弈）；Boss 击破走 addScore 保底、不进连击。
+  function killScore(base, time) {
+    combo++;
+    killCount++;
+    if (combo > maxCombo) maxCombo = combo;
+    comboUntil = time + CONFIG.combo.window;
+    if (combo === CONFIG.combo.maxCount) floatText(player.x, player.y - 50, '连击 MAX！', '#ff8a5c');
+    addScore(Math.round(base * (1 + Math.min(combo, CONFIG.combo.maxCount) * CONFIG.combo.step)));
+  }
+
   function reset() {
     score = 0;
     player = new Player();
@@ -662,6 +683,7 @@
     wave = 1;
     waveTimer = 0;
     newRecord = false;
+    combo = 0; comboUntil = 0; maxCombo = 0; killCount = 0; runTime = 0;
     recomputeDiff();
     spawnAcc = 0;
     pendingSpawns = [];
@@ -699,6 +721,7 @@
       }
       for (const e of enemies) if (e.nextFire !== undefined) e.nextFire += shift;
       if (boss) boss.nextFire += shift;
+      comboUntil += shift; // 连击窗口同样不受暂停影响
       state = 'PLAYING';
       duckBgm(false);
     }
@@ -707,6 +730,8 @@
   // 玩家受击：扣命 + 僚机全损 + 缓冲护盾 + 强反馈（震屏/红闪/爆炸/飘字），命数归零则结束
   function damagePlayer(time) {
     player.lives--;
+    if (combo >= 5) floatText(player.x, player.y + 26, '连击中断 ×' + combo, '#8aa0c8');
+    combo = 0; // 中弹清零连击
     player.invincibleUntil = time + CONFIG.player.invincibleTime;
     player.shieldUntil = time + CONFIG.player.hurtShieldDuration; // 可见护盾泡 = 喘息期，比无敌闪烁醒目
     if (player.options.length > 0) {
@@ -736,6 +761,7 @@
     explode(boss.x - 32, boss.y, '#ffd24a', 22);
     explode(boss.x + 32, boss.y, '#ffd24a', 22);
     const reward = CONFIG.boss.score + bossLevel * CONFIG.boss.scorePerLevel;
+    killCount++; // Boss 击破计入击破数（但不进连击，保底分走 addScore）
     addScore(reward);
     floatText(boss.x, boss.y - 24, 'BOSS 击破 +' + reward, '#ffe066');
     // 击败掉落：P / S / B 各一个（左右顺序随机），比清一色火力更有价值
@@ -767,7 +793,7 @@
       e.hp -= CONFIG.skills.bombDamage;
       if (e.hp <= 0) {
         explode(e.x, e.y, e.def.color, 14);
-        addScore(e.scoreVal);
+        killScore(e.scoreVal, performance.now()); // 炸弹击杀照常计入连击
         enemies.splice(i, 1);
       } else {
         e.flash = 1;
@@ -1563,6 +1589,10 @@
 
     player.update(dt, time);
 
+    // 用时累计（仅 PLAYING 态执行 → 暂停不计时）；连击窗口到期即断
+    runTime += dms;
+    if (combo > 0 && time >= comboUntil) combo = 0;
+
     // 波次推进：存活足够时间进入下一波并提升难度
     waveTimer += dms;
     if (waveTimer >= CONFIG.wave.duration) {
@@ -1656,7 +1686,7 @@
           if (e.hp <= 0) {
             enemies.splice(i, 1);
             explode(e.x, e.y, e.def.color, e.maxHp > 3 ? 24 : 14);
-            addScore(e.scoreVal);
+            killScore(e.scoreVal, time); // 连击结算（受倍率加成）
             SFX.explode();
             maybeDrop(e.x, e.y, e.maxHp > 3); // 击毁掉落（重型机概率更高）
           } else {
@@ -1849,6 +1879,22 @@
       ctx.fillRect(bx, by, bw * remain, bh);
     }
 
+    // 连击（右侧命数下方）：计数 + 剩余时间条，封顶变橙提示 MAX
+    if (combo > 0) {
+      const capped = combo >= CONFIG.combo.maxCount;
+      ctx.textAlign = 'right';
+      ctx.fillStyle = capped ? '#ff8a5c' : '#cfe2ff';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText('连击 ×' + (capped ? CONFIG.combo.maxCount + ' MAX' : combo), W - 14, 40);
+      const remain = Math.max(0, (comboUntil - time) / CONFIG.combo.window);
+      const bx = W - 14 - 72, by = 58, bw = 72, bh = 4;
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.fillStyle = remain > 0.4 ? (capped ? '#ff8a5c' : '#cfe2ff') : '#ff5a4a';
+      ctx.fillRect(bx + bw * (1 - remain), by, bw * remain, bh);
+      ctx.textAlign = 'left';
+    }
+
     for (let i = 0; i < player.lives; i++) {
       drawMiniShip(W - 16 - i * 22, 22);
     }
@@ -1926,21 +1972,27 @@
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#ff6b6b';
     ctx.font = 'bold 46px sans-serif';
-    ctx.fillText('游戏结束', W / 2, H / 2 - 50);
+    ctx.fillText('游戏结束', W / 2, H / 2 - 64);
     ctx.fillStyle = '#ffe066';
     ctx.font = 'bold 26px sans-serif';
-    ctx.fillText('得分 ' + score, W / 2, H / 2 + 4);
+    ctx.fillText('得分 ' + score, W / 2, H / 2 - 10);
+    // 本局统计：击破 / 最大连击 / 用时
+    const t = Math.floor(runTime / 1000);
+    const clock = Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+    ctx.fillStyle = '#8aa0c8';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('击破 ' + killCount + ' · 最大连击 ×' + maxCombo + ' · 用时 ' + clock, W / 2, H / 2 + 22);
     ctx.fillStyle = '#cfe2ff';
     ctx.font = '17px sans-serif';
-    ctx.fillText('最高分 ' + highScore, W / 2, H / 2 + 38);
+    ctx.fillText('最高分 ' + highScore, W / 2, H / 2 + 52);
     if (newRecord) {
       ctx.fillStyle = '#7CFC00';
       ctx.font = 'bold 18px sans-serif';
-      ctx.fillText('★ 新纪录！★', W / 2, H / 2 + 64);
+      ctx.fillText('★ 新纪录！★', W / 2, H / 2 + 80);
     }
     ctx.fillStyle = '#cfe2ff';
     ctx.font = '17px sans-serif';
-    ctx.fillText('点击 / 按任意键重新开始', W / 2, H / 2 + 92);
+    ctx.fillText('点击 / 按任意键重新开始', W / 2, H / 2 + 108);
   }
 
   function drawPause() {

@@ -27,7 +27,7 @@ node --check game.js
 需要跨分区理解的关键机制：
 
 - **逻辑分辨率固定 480×720**，CSS 负责缩放适配。所有指针坐标必须经 `toCanvasPos()` 从屏幕坐标换算成画布坐标。
-- **三套时间参数贯穿 update(dt, dms, time)**：`dt` 为归一化到 60fps 的帧数（速度乘它），`dms` 为真实毫秒（计时器累加用），`time` 为 rAF 绝对时间戳。实体普遍用"绝对时间戳到期"型计时器（`invincibleUntil`、`shieldUntil`、`powerDecayAt`、`nextFire`）——**新增此类计时器必须同时加进 `togglePause()` 恢复时的整体平移逻辑**，否则暂停期间计时照走（此前已因此修过 bug）。
+- **三套时间参数贯穿 update(dt, dms, time)**：`dt` 为归一化到 60fps 的帧数（速度乘它），`dms` 为真实毫秒（计时器累加用），`time` 为 rAF 绝对时间戳。实体普遍用"绝对时间戳到期"型计时器（`invincibleUntil`、`shieldUntil`、`powerDecayAt`、`nextFire`、`comboUntil`）——**新增此类计时器必须同时加进 `togglePause()` 恢复时的整体平移逻辑**，否则暂停期间计时照走（此前已因此修过 bug）。
 - **碰撞**：`hit()` 为中心点 + 宽高的 AABB，实体若有更小的 `hitW`/`hitH`（玩家判定核）则优先使用；道具拾取不走 `hit()`，用 30px 宽松圆形判定。
 - **难度曲线**：`wave` 每 18 秒 +1，`recomputeDiff()` 重算刷怪间隔/敌机速度/开火倍率，`pickEnemyType()` 按波次加权选敌机类型。
 - **Boss**：分数达门槛登场（`nextBossScore`，间隔等差递增 `gapScore+(n-1)*gapStep`），在场时暂停普通刷怪与编队队列；三种型号按 bossLevel 轮换（`BOSS_ORDER`/`BOSS_TYPES`：旗舰=定向扇 / 环堡=整圈+螺旋 / 掠袭者=冲刺+沿途撒弹），阶段参数在 `def.phases`，攻击阶段由血量百分比驱动；BGM 经 `setTrack()` 在卡农/Boss 战曲间切换（击败、重开都要切回）。
