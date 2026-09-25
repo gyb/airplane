@@ -60,9 +60,12 @@
       bonusScore: 100     // 火力满级时拾取给予的奖励分
     },
     combo: {
-      window: 2200,     // 连击维持窗口（毫秒）：距上次击杀超过即断
+      window: 1800,     // 连击维持窗口（毫秒）：距上次击杀超过即断
       maxCount: 20,     // 倍率封顶对应的连击数
       step: 0.1         // 每点连击增加的得分倍率（封顶 ×3）
+    },
+    ui: {
+      restartDelay: 1500 // 结束画面接受重开输入前的静置时长（毫秒），保护结算统计可读
     },
     skills: {
       shieldDuration: 6000, // 护盾持续时长（毫秒）
@@ -629,6 +632,7 @@
   let formationCd = 0;     // 编队冷却（毫秒累计，仅更新中递减 → 暂停安全）
   let lastTime = 0;
   let pausedAt = 0;       // 进入暂停时的时间戳（用于恢复时平移计时器）
+  let gameOverAt = 0;     // 进入结束画面的时间戳（重开输入静置用）
   let flashScreen = 0;    // 炸弹引爆时的全屏闪光强度（0~1）
   let shake = 0;          // 受击震屏强度（0~1，映射到 hurtShake 像素）
   let hurtFlash = 0;      // 受击红闪强度（0~1）
@@ -698,9 +702,11 @@
     duckBgm(false);
   }
 
+  // 开始/重开：结束画面需静置 restartDelay 毫秒后才接受输入，避免手滑瞬间跳过结算统计
   function tryStart() {
     resumeAudio();
-    if (state === 'MENU' || state === 'GAMEOVER') startGame();
+    if (state === 'MENU') startGame();
+    else if (state === 'GAMEOVER' && performance.now() - gameOverAt >= CONFIG.ui.restartDelay) startGame();
   }
 
   // 暂停 / 继续（仅在"游戏中"与"暂停"之间切换）
@@ -747,6 +753,7 @@
     SFX.playerHit();
     if (player.lives <= 0) {
       state = 'GAMEOVER';
+      gameOverAt = time;
       saveHighScore();
       SFX.gameOver();
       duckBgm(true);
