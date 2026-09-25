@@ -105,7 +105,7 @@
     diver:   { w: 30, h: 34, hp: 1, speed: 2.3, sway: 0.5, score: 20,
                color: '#ffb13b', color2: '#b35900', cockpit: '#331a00',
                dive: { minY: 80, range: 78, speed: 6.5 } },
-    turret:  { w: 50, h: 44, hp: 25, speed: 1.4, sway: 0, score: 150,
+    turret:  { w: 50, h: 44, hp: 20, speed: 1.4, sway: 0, score: 150,
                color: '#8a97b8', color2: '#4a5570', cockpit: '#ff5a4a',
                fireInterval: 1300,
                hover: { yMin: 100, yMax: 210, frames: 460, ring: { n: 10, spin: 0.31 } } }
