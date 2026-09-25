@@ -393,8 +393,14 @@
   // 环堡：D 小调沉重压迫曲——挽歌式下行低音 + 小六度跳跃的钟楼咏叹 + 两拍一记重锤
   const RING_BPM = 104;
   const RING_STEP = 60 / RING_BPM / 2;
-  // 低音每 4 步（半小节）换一次：Dm → C → Bb → Am 挽歌式级数下行
-  const RING_BASS = [73.42, 65.41, 58.27, 55.00];
+  // 低音节奏型：每半小节「长音—高八度顿音」的点附步进（0 为休止），
+  // 和弦仍按 Dm → C → Bb → Am 挽歌式级数下行
+  const RING_BASS = [
+    73.42, 0, 0, 146.83,
+    65.41, 0, 0, 130.81,
+    58.27, 0, 0, 116.54,
+    55.00, 0, 0, 110.00
+  ];
   // 咏叹旋律：D5 起跳小六度到 Bb5 的"钟楼呼号"是记忆点（半音下滑似叹息），
   // 两次陈述后以五度空心音 E5 收束；0 为休止
   const RING_MELODY = [
@@ -404,7 +410,9 @@
     880.00, 0, 659.25, 0
   ];
   function scheduleRingStep(step, time) {
-    bgmNote(RING_BASS[(step >> 2) % RING_BASS.length], time, RING_STEP * 3.8, 'sawtooth', 0.18);
+    // 低音点附节奏：半小节头上的长音 + 换和弦前的高八度顿音（顿音落在重拍后，推动和声）
+    const b = RING_BASS[step % RING_BASS.length];
+    if (b) bgmNote(b, time, RING_STEP * (step % 4 === 0 ? 3.2 : 0.8), 'sawtooth', step % 4 === 0 ? 0.18 : 0.15);
     const m = RING_MELODY[step % RING_MELODY.length];
     if (m) bgmNote(m, time, RING_STEP * 1.6, 'triangle', 0.13);
     if (step % 8 === 0 || step % 8 === 4) bgmKick(time); // 1、3 拍重锤，沉重的步进感
