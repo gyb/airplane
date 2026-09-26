@@ -1,0 +1,2118 @@
+/*
+ * 飞机大战 · 双人版 —— HTML5 Canvas（fork 自单人版 game.js，单人版保持不动）
+ * 竖屏卷轴 · 纯 Canvas 图形绘制 · P1 键盘 + P2 鼠标 · 双机自动开火
+ * 规则：分数/连击/擦弹攒槽全队共享（个人贡献结算展示）；生命各 3 条、全灭才结束；
+ *       敌机与 Boss 瞄准最近的存活玩家；道具谁碰到归谁；无友军伤害；不支持触屏。
+ *
+ * 结构分区：
+ *   CONFIG     游戏参数集中配置
+ *   ENEMY_TYPES 敌机类型定义（血量/速度/火力/分数/配色）
+ *   SETUP      画布与上下文
+ *   INPUT      双人输入（P1 键盘 / P2 鼠标，暂停与静音为全局键）
+ *   STATE      游戏状态机（MENU / PLAYING / GAMEOVER）
+ *   ENTITY     Player ×2 / Bullet / Option / Enemy / EnemyBullet / PowerUp / Boss
+ *   UPDATE     每帧逻辑更新
+ *   RENDER     每帧绘制
+ *   LOOP       requestAnimationFrame 主循环
+ */
+(() => {
+  'use strict';
+
+  // ================= CONFIG =================
+  const CONFIG = {
+    width: 480,
+    height: 720,
+    player: {
+      width: 42,
+      height: 50,
+      hitW: 14,             // 判定核宽（远小于视觉机身，更公平）
+      hitH: 18,             // 判定核高
+      speed: 6,             // 每帧（60fps 基准）移动像素
+      fireInterval: 170,    // 自动开火间隔（毫秒）
+      maxLives: 3,
+      invincibleTime: 1500, // 受击后无敌时长（毫秒）
+      hurtShieldDuration: 2500, // 受击后的缓冲护盾时长（毫秒）：可见护盾泡+倒计时条，给玩家喘息适应
+      hurtShake: 12,        // 受击震屏幅度（像素，随时间快速衰减）
+      maxPower: 5,          // 火力最高等级
+      powerDecayInterval: 15000 // 火力每过这么久（毫秒）未拾取道具则降一级
+    },
+    option: {
+      maxCount: 2,       // 僚机数量上限（满级吃 P 转化，先左后右各一）
+      offsetX: 34,       // 跟玩家中心的水平间距
+      offsetY: 30,       // 跟玩家中心的垂直后置距离
+      followEase: 0.18,  // 跟随阻尼系数（每帧向目标点插值的比例，60fps 基准）
+      bulletW: 3,        // 僚机小弹宽
+      bulletH: 10        // 僚机小弹高
+    },
+    bullet: { width: 5, height: 16, speed: 11 },
+    enemy: {
+      spawnInterval: 820   // 基础生成间隔（毫秒），随分数递增而缩短
+    },
+    formation: {
+      chance: 0.16,      // 刷怪点改出编队的概率（需过 minWave 且冷却结束）
+      minWave: 2,        // 编队最早登场波次（各队形另有自己的 minWave）
+      cooldown: 5200     // 两个编队之间的最小间隔（毫秒）
+    },
+    enemyBullet: {
+      speed: 4.3           // 敌弹速度（比玩家子弹慢，便于躲避）
+    },
+    powerup: {
+      dropChance: 0.12,   // 敌机被击毁时掉落火力道具的概率（重型机更高）
+      fallSpeed: 1.6,     // 道具下落速度（每帧像素）
+      bonusScore: 100     // 火力满级时拾取给予的奖励分
+    },
+    combo: {
+      window: 1800,     // 连击维持窗口（毫秒）：距上次击杀超过即断
+      maxCount: 20,     // 倍率封顶对应的连击数
+      step: 0.1         // 每点连击增加的得分倍率（封顶 ×3）
+    },
+    ui: {
+      restartDelay: 1500 // 结束画面接受重开输入前的静置时长（毫秒），保护结算统计可读
+    },
+    graze: {
+      radius: 32,      // 擦弹圈半径（判定核之外、视觉机身一带的环形区域）
+      score: 10,       // 每次擦弹得分（固定值，不吃连击倍率）
+      bombEvery: 30    // 擦弹攒槽：每擦 N 次奖励 1 颗炸弹（满库存转奖励分）
+    },
+    skills: {
+      shieldDuration: 6000, // 护盾持续时长（毫秒）
+      bombDamage: 6,        // 炸弹对普通敌机的伤害
+      bossBombDamage: 40,   // 炸弹对 Boss 的伤害
+      bombInvuln: 1000,     // 引爆后玩家短暂无敌（毫秒）
+      maxBombs: 3           // 炸弹最大库存
+    },
+    boss: {
+      firstScore: 1200,    // 首个 Boss 登场的分数门槛
+      gapScore: 1800,      // 击败后到下一个 Boss 需要再涨的基础分数
+      gapStep: 600,        // 间隔分数的等差增量：第 n 个 Boss 的间隔 = gapScore + (n-1)*gapStep
+                           // （后期分数涨速越来越快，固定间隔会让 Boss 出得越来越频繁）
+      baseHp: 200,        // Boss 基础血量
+      hpPerLevel: 80,     // 每个后续 Boss 额外血量
+      score: 300,         // 击败基础奖励分
+      scorePerLevel: 100, // 每个后续 Boss 额外奖励分
+      dropCount: 3        // 击败后掉落的 P 道具数量
+    },
+    wave: {
+      duration: 18000     // 每波时长（毫秒），到点进入下一波并提升难度
+    },
+    duo: {
+      spawnMul: 0.78      // 双人火力约为单人两倍，刷怪间隔整体乘此系数（<1 = 更密）补偿难度
+    }
+  };
+
+  // 各火力等级的子弹编排：ox=水平偏移，a=相对正上方的偏转角（弧度）
+  const FIRE_PATTERNS = [
+    [{ ox: 0, a: 0 }],                                                      // Lv1 单发
+    [{ ox: -8, a: 0 }, { ox: 8, a: 0 }],                                    // Lv2 双发
+    [{ ox: 0, a: 0 }, { ox: -10, a: -0.18 }, { ox: 10, a: 0.18 }],          // Lv3 三向
+    [{ ox: -8, a: 0 }, { ox: 8, a: 0 }, { ox: -14, a: -0.22 }, { ox: 14, a: 0.22 }], // Lv4 四发带散射
+    [{ ox: 0, a: 0 }, { ox: -10, a: -0.12 }, { ox: 10, a: 0.12 }, { ox: -16, a: -0.26 }, { ox: 16, a: 0.26 }] // Lv5 五向宽散射
+  ];
+
+  // 敌机类型：hp 血量 · speed 下落速度 · sway 摇摆幅度 · score 分数
+  //   fireInterval 开火间隔(空则不开火) · fan 扇形弹幕(n 发/张角，空则单发瞄准)
+  //   dive 自爆锁定(俯冲触发) · hover 悬浮炮悬停(入场→悬停开火→撤离)
+  const ENEMY_TYPES = {
+    scout:   { w: 34, h: 32, hp: 1, speed: 3.0, sway: 0.6, score: 10,
+               color: '#ff6a4a', color2: '#a8311f', cockpit: '#3a0d12' },
+    fighter: { w: 42, h: 42, hp: 3, speed: 1.9, sway: 0.4, score: 30,
+               color: '#c060d8', color2: '#6a2a7a', cockpit: '#2a0d33', fireInterval: 1500 },
+    heavy:   { w: 60, h: 56, hp: 7, speed: 1.1, sway: 0.25, score: 70,
+               color: '#5fae5f', color2: '#2f5f2f', cockpit: '#102210', fireInterval: 2100,
+               fan: { n: 5, spread: 0.55 } },
+    diver:   { w: 30, h: 34, hp: 1, speed: 2.3, sway: 0.5, score: 20,
+               color: '#ffb13b', color2: '#b35900', cockpit: '#331a00',
+               // 侧翼突入：从屏幕侧面贴近玩家高度横向逼近（走在垂直火力线下方），
+               // 接近后锁定玩家当前位置、闪烁蓄力 windup 帧再冲刺
+               dive: { range: 110, speed: 6.5, windup: 18 } },
+    turret:  { w: 50, h: 44, hp: 20, speed: 1.4, sway: 0, score: 150,
+               color: '#8a97b8', color2: '#4a5570', cockpit: '#ff5a4a',
+               fireInterval: 1300,
+               hover: { yMin: 100, yMax: 210, frames: 460, ring: { n: 10, spin: 0.31 } } }
+  };
+
+  // 道具类型：power 火力 / shield 护盾 / bomb 炸弹
+  const POWERUP_TYPES = {
+    power:  { color: '#ffcc33', glow: '#ffd24a', inner: '#fff4d0', ink: '#7a5200', label: 'P' },
+    shield: { color: '#39e6c8', glow: '#5fffe0', inner: '#d8fff7', ink: '#0a4a40', label: 'S' },
+    bomb:   { color: '#ff7a3b', glow: '#ffb066', inner: '#ffe2cc', ink: '#5a1d00', label: 'B' }
+  };
+
+  // 编队定义：minWave 登场波次 · weight 抽取权重 · make() 生成成员表。
+  // 成员字段：delay 入场延迟(毫秒) · x/y 入场位置 · vx 侧向速度 · speedMul 下落速度倍率
+  //           · swayMul 摇摆倍率（编队成员调小/归零以保持队形） · type 敌机类型
+  const FORMATIONS = [
+    { key: 'wedge', minWave: 2, weight: 3, // V 字楔形：机头先行，双翼依次拖后
+      make() {
+        const cx = rand(W * 0.3, W * 0.7);
+        return [
+          { delay: 0,   x: cx,      type: 'scout', swayMul: 0.15 },
+          { delay: 90,  x: cx - 30, type: 'scout', swayMul: 0.15 },
+          { delay: 90,  x: cx + 30, type: 'scout', swayMul: 0.15 },
+          { delay: 180, x: cx - 60, type: 'scout', swayMul: 0.15 },
+          { delay: 180, x: cx + 60, type: 'scout', swayMul: 0.15 }
+        ];
+      } },
+    { key: 'column', minWave: 3, weight: 3, // 纵列：同一 x 鱼贯而入（wave≥4 换成会开火的战斗机）
+      make() {
+        const x = rand(W * 0.2, W * 0.8);
+        const type = wave >= 4 ? 'fighter' : 'scout';
+        return [0, 1, 2, 3, 4].map(i => ({ delay: i * 240, x, type, swayMul: 0 }));
+      } },
+    { key: 'sweep', minWave: 3, weight: 2, // 侧向突入：从一侧斜切过屏幕上半部
+      make() {
+        const dir = Math.random() < 0.5 ? 1 : -1; // 1 = 从左向右
+        const y = rand(90, 170);
+        return [0, 1, 2, 3].map(i => ({
+          delay: i * 230, x: dir > 0 ? -24 : W + 24, y,
+          vx: dir * 2.4, speedMul: 0.45, type: 'scout', swayMul: 0
+        }));
+      } },
+    { key: 'line', minWave: 4, weight: 2, // 横排封锁线：整排压下但必留一个缺口可穿
+      make() {
+        const n = 6, gap = (Math.random() * n) | 0, arr = [];
+        for (let i = 0; i < n; i++) {
+          if (i === gap) continue;
+          arr.push({ delay: 0, x: W * (i + 0.5) / n, type: 'scout', swayMul: 0 });
+        }
+        return arr;
+      } }
+  ];
+
+  // Boss 型号（按 bossLevel 轮换）：name 名称 · w/h 尺寸 · hpMul 血量系数（按命中窗口差异校准）
+  //   move 移动模式（cruise 巡航 / drift 漂移 / dash 冲刺）· phases 各阶段攻击参数
+  const BOSS_ORDER = ['flagship', 'ring', 'ramer'];
+  const BOSS_TYPES = {
+    flagship: {
+      name: '旗舰', w: 160, h: 110, hpMul: 1.0, move: 'cruise',
+      phases: [
+        { interval: 1000, shots: [0] },                                       // 单发瞄准
+        { interval: 820,  shots: [-0.3, 0, 0.3] },                            // 三向
+        { interval: 680,  shots: [-0.4, -0.2, 0, 0.2, 0.4], vert: true }      // 五向宽扇 + 双垂直
+      ]
+    },
+    ring: {
+      name: '环堡', w: 150, h: 130, hpMul: 1.2, move: 'drift',
+      phases: [
+        { interval: 1600, ring: { n: 16, spin: 0.28 } },                      // 整圈（以玩家方向为基准逐轮旋转）
+        { interval: 1400, ring: { n: 16, spin: 0.28 }, rings: 2 },            // 双圈相位差
+        { interval: 1800, ring: { n: 14, spin: 0.2 },                         // 双臂螺旋流 + 高密圈弹
+          spiral: { every: 7, step: 0.38, arms: 2 } }
+      ]
+    },
+    ramer: {
+      name: '掠袭者', w: 150, h: 70, hpMul: 0.85, move: 'dash',
+      phases: [
+        { interval: 900,  shots: [-0.25, 0, 0.25] },                          // 停顿边缘 3 连瞄准
+        { interval: 900,  shots: [-0.25, 0, 0.25], trail: 1 },                // + 冲刺沿途撒单排弹
+        { interval: 700,  shots: [-0.25, 0, 0.25], trail: 2, column: 3 }      // 双排撒弹 + 停顿弹幕柱
+      ]
+    }
+  };
+
+  // ================= SETUP =================
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = CONFIG.width, H = CONFIG.height;
+
+  const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  // 把屏幕坐标换算成画布内部坐标（处理 CSS 缩放）
+  function toCanvasPos(clientX, clientY) {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: (clientX - r.left) * (W / r.width),
+      y: (clientY - r.top) * (H / r.height)
+    };
+  }
+
+  // AABB 碰撞（实体以中心点 + 宽高表示）
+  // 若实体定义了更小的 hitW/hitH（如玩家判定核），优先使用，避免视觉边缘误判
+  function hit(a, b) {
+    const aw = a.hitW || a.w, ah = a.hitH || a.h;
+    const bw = b.hitW || b.w, bh = b.hitH || b.h;
+    return Math.abs(a.x - b.x) < (aw + bw) / 2 &&
+           Math.abs(a.y - b.y) < (ah + bh) / 2;
+  }
+
+  // 右下角炸弹按钮区域（供鼠标 / 触摸点击释放炸弹）
+  const BOMB_BTN = { x: W - 46, y: H - 46, r: 32 };
+  function inBombButton(x, y) { return Math.hypot(x - BOMB_BTN.x, y - BOMB_BTN.y) < BOMB_BTN.r; }
+
+  // 环形弹幕：从 (x,y) 以基准角 base 整圈发射 n 发（悬浮炮 / 环堡 Boss 共用）
+  function ringBurst(x, y, n, base) {
+    const speed = CONFIG.enemyBullet.speed;
+    for (let i = 0; i < n; i++) {
+      const a = base + Math.PI * 2 * i / n;
+      enemyBullets.push(new EnemyBullet(x, y, Math.cos(a) * speed, Math.sin(a) * speed));
+    }
+  }
+
+  // 按当前波次加权选择敌机类型（波次越高，重型机/自爆机/悬浮炮越多）
+  function pickEnemyType() {
+    let w;
+    if (wave < 3)      w = { scout: 0.82, fighter: 0.18 };
+    else if (wave < 6) w = { scout: 0.50, fighter: 0.30, diver: 0.14, heavy: 0.06 };
+    else               w = { scout: 0.34, fighter: 0.36, diver: 0.14, heavy: 0.10, turret: 0.06 };
+    const r = Math.random();
+    let acc = 0;
+    for (const k of Object.keys(w)) { acc += w[k]; if (r <= acc) return k; }
+    return 'scout';
+  }
+
+  // 自爆机侧翼突入：从屏幕左右侧、贴着随机一名存活玩家的高度带横向逼近。
+  // （若沿用顶部进场俯冲，1 血机身必然穿过玩家垂直火力线被自动拦截，自爆不成立）
+  function spawnDiver() {
+    const tps = players.filter(p => p.alive);
+    if (!tps.length) return;
+    const tp = tps[(Math.random() * tps.length) | 0];
+    const dir = Math.random() < 0.5 ? 1 : -1; // 1 = 从左向右
+    const y = clamp(tp.y - rand(60, 160), 150, H - 80);
+    enemies.push(new Enemy('diver', {
+      x: dir > 0 ? -20 : W + 20,
+      y,
+      vx: dir * 2.6,        // 横向巡航
+      speedMul: 0.35,       // 缓慢下沉
+      swayMul: 0.3
+    }));
+  }
+
+  // 抽一个当前波次可用的编队，全部成员排入待入场队列
+  function queueFormation() {
+    const pool = FORMATIONS.filter(f => wave >= f.minWave);
+    let total = 0;
+    for (const f of pool) total += f.weight;
+    let r = Math.random() * total;
+    let pick = pool[0];
+    for (const f of pool) { r -= f.weight; if (r <= 0) { pick = f; break; } }
+    for (const m of pick.make()) pendingSpawns.push(m);
+  }
+
+  // ================= AUDIO =================
+  // 全部用 WebAudio 合成，无外部音频文件。首次用户手势（开始游戏）后解锁。
+  let audioCtx = null;
+  let masterGain, musicGain, sfxGain;
+  let audioEnabled = true;
+
+  function initAudio() {
+    if (audioCtx) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return; // 浏览器不支持则静默跳过
+    audioCtx = new AC();
+    masterGain = audioCtx.createGain(); masterGain.gain.value = 0.6;
+    masterGain.connect(audioCtx.destination);
+    musicGain = audioCtx.createGain(); musicGain.gain.value = 0.3;
+    musicGain.connect(masterGain);
+    sfxGain = audioCtx.createGain(); sfxGain.gain.value = 0.6;
+    sfxGain.connect(masterGain);
+  }
+
+  // 在用户手势中调用，解除浏览器自动播放限制
+  function resumeAudio() {
+    initAudio();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  }
+
+  // 单音（可滑音）
+  function tone(freq, dur, { type = 'square', vol = 0.4, slideTo, delay = 0, attack = 0.005, dest } = {}) {
+    if (!audioCtx || !audioEnabled) return;
+    const t0 = audioCtx.currentTime + delay;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t0);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(1, slideTo), t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(vol, t0 + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(dest || sfxGain);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+
+  // 噪声（爆炸 / 鼓）
+  function noise(dur, { vol = 0.4, freq = 1000, type = 'lowpass', delay = 0, dest } = {}) {
+    if (!audioCtx || !audioEnabled) return;
+    const t0 = audioCtx.currentTime + delay;
+    const len = Math.max(1, Math.floor(audioCtx.sampleRate * dur));
+    const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const s = audioCtx.createBufferSource(); s.buffer = buf;
+    const f = audioCtx.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    s.connect(f); f.connect(g); g.connect(dest || sfxGain);
+    s.start(t0); s.stop(t0 + dur + 0.02);
+  }
+
+  const SFX = {
+    explode() { noise(0.22, { vol: 0.35, freq: 900 }); tone(170, 0.18, { type: 'sawtooth', vol: 0.18, slideTo: 55 }); },
+    bossExplode() { noise(0.6, { vol: 0.45, freq: 600 }); tone(130, 0.6, { type: 'sawtooth', vol: 0.3, slideTo: 38 }); tone(200, 0.5, { type: 'square', vol: 0.12, slideTo: 45, delay: 0.06 }); },
+    powerup() { tone(660, 0.08, { type: 'triangle', vol: 0.3 }); tone(880, 0.08, { type: 'triangle', vol: 0.3, delay: 0.08 }); tone(1320, 0.12, { type: 'triangle', vol: 0.3, delay: 0.16 }); },
+    playerHit() { noise(0.3, { vol: 0.45, freq: 420 }); tone(240, 0.3, { type: 'sawtooth', vol: 0.3, slideTo: 80 }); },
+    bossWarn() { tone(440, 0.15, { type: 'square', vol: 0.25 }); tone(440, 0.15, { type: 'square', vol: 0.25, delay: 0.3 }); },
+    gameOver() { tone(440, 0.2, { type: 'triangle', vol: 0.3 }); tone(330, 0.2, { type: 'triangle', vol: 0.3, delay: 0.2 }); tone(220, 0.4, { type: 'triangle', vol: 0.3, delay: 0.4, slideTo: 110 }); },
+    start() { tone(440, 0.08, { type: 'triangle', vol: 0.3 }); tone(660, 0.08, { type: 'triangle', vol: 0.3, delay: 0.08 }); tone(880, 0.12, { type: 'triangle', vol: 0.3, delay: 0.16 }); },
+    bomb() { noise(0.7, { vol: 0.5, freq: 400 }); tone(110, 0.7, { type: 'sawtooth', vol: 0.35, slideTo: 30 }); },
+    shield() { tone(523, 0.1, { type: 'triangle', vol: 0.25 }); tone(784, 0.12, { type: 'triangle', vol: 0.25, delay: 0.08 }); tone(1046, 0.14, { type: 'triangle', vol: 0.25, delay: 0.16 }); },
+    turret() { tone(200, 0.1, { type: 'square', vol: 0.2 }); tone(150, 0.16, { type: 'square', vol: 0.16, delay: 0.06 }); },
+    dash() { noise(0.16, { vol: 0.22, freq: 2400, type: 'highpass' }); tone(300, 0.16, { type: 'sawtooth', vol: 0.12, slideTo: 90 }); },
+    graze() { tone(1400, 0.03, { type: 'triangle', vol: 0.07 }); }, // 极轻的擦弹提示音（调用处限流）
+  };
+
+  // ---- 背景音乐：卡农（D 大调）主旋律 + 地面低音，lookahead 调度循环 ----
+  const music = { step: 0, nextNoteTime: 0, timer: null };
+  const BGM_BPM = 96;
+  const BGM_STEP = 60 / BGM_BPM / 2; // 8 分音符（每步一个旋律音）
+  // 卡农主旋律（两乐句循环）：F#5 E5 D5 C#5 B4 A4 B4 C#5 | D5 C#5 B4 A4 G4 F#4 G4 E4
+  const BGM_MELODY = [
+    739.99, 659.25, 587.33, 554.37, 493.88, 440.00, 493.88, 554.37,
+    587.33, 554.37, 493.88, 440.00, 392.00, 369.99, 392.00, 329.63
+  ];
+  // 地面低音（每两步换一次）：D A B F# G D G A
+  const BGM_BASS = [146.83, 110.00, 123.47, 92.50, 98.00, 146.83, 98.00, 110.00];
+
+  function bgmNote(freq, time, dur, type, vol) {
+    if (!audioCtx) return;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(vol, time + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+    o.connect(g); g.connect(musicGain);
+    o.start(time); o.stop(time + dur + 0.02);
+  }
+  function bgmKick(time) {
+    if (!audioCtx) return;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.setValueAtTime(150, time); o.frequency.exponentialRampToValueAtTime(50, time + 0.1);
+    g.gain.setValueAtTime(0.5, time); g.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
+    o.connect(g); g.connect(musicGain); o.start(time); o.stop(time + 0.13);
+  }
+  function bgmHat(time) {
+    if (!audioCtx) return;
+    const len = Math.floor(audioCtx.sampleRate * 0.03);
+    const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const s = audioCtx.createBufferSource(); s.buffer = buf;
+    const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 7000;
+    const g = audioCtx.createGain(); g.gain.setValueAtTime(0.07, time); g.gain.exponentialRampToValueAtTime(0.001, time + 0.03);
+    s.connect(f); f.connect(g); g.connect(musicGain); s.start(time); s.stop(time + 0.04);
+  }
+  function scheduleBgmStep(step, time) {
+    bgmNote(BGM_MELODY[step % BGM_MELODY.length], time, BGM_STEP * 1.6, 'triangle', 0.13); // 主旋律（连奏）
+    if (step % 2 === 0) bgmNote(BGM_BASS[(step / 2) % BGM_BASS.length], time, BGM_STEP * 1.9, 'sine', 0.20); // 地面低音
+  }
+
+  // ---- Boss 战曲：每型一首专属曲（原创，无版权），型号名即曲目键 ----
+  // 旗舰：D 小调进行曲——驱动低音 + 紧张旋律 + 底鼓（原 Boss 曲）
+  const FLAG_BPM = 140;
+  const FLAG_STEP = 60 / FLAG_BPM / 2; // 8 分音符
+  // 驱动低音（Dm-Am-Bb-C 进行，每步一个 8 分音符，断奏）
+  const FLAG_BASS = [
+    146.83, 146.83, 146.83, 146.83, 110.00, 110.00, 110.00, 110.00,
+    116.54, 116.54, 116.54, 116.54, 130.81, 130.81, 130.81, 130.81
+  ];
+  // 紧张主旋律（用 b6 音 Bb 增添紧张感，0 为休止）
+  const FLAG_MELODY = [
+    587.33, 0, 440.00, 587.33, 0, 523.25, 466.16, 0,
+    440.00, 0, 466.16, 0, 523.25, 587.33, 0, 0
+  ];
+  function scheduleFlagshipStep(step, time) {
+    bgmNote(FLAG_BASS[step % FLAG_BASS.length], time, FLAG_STEP * 0.9, 'sawtooth', 0.13);
+    const m = FLAG_MELODY[step % FLAG_MELODY.length];
+    if (m) bgmNote(m, time, FLAG_STEP * 1.4, 'square', 0.10);
+    if (step % 2 === 0) bgmKick(time); // 每拍底鼓，增强驱动感
+    if (step % 2 === 1) bgmHat(time);
+  }
+
+  // 环堡：D 小调沉重压迫曲——挽歌式下行低音 + 小六度跳跃的钟楼咏叹 + 两拍一记重锤
+  const RING_BPM = 104;
+  const RING_STEP = 60 / RING_BPM / 2;
+  // 低音节奏型：每半小节「长音—高八度顿音」的点附步进（0 为休止），
+  // 和弦仍按 Dm → C → Bb → Am 挽歌式级数下行
+  const RING_BASS = [
+    73.42, 0, 0, 146.83,
+    65.41, 0, 0, 130.81,
+    58.27, 0, 0, 116.54,
+    55.00, 0, 0, 110.00
+  ];
+  // 咏叹旋律：D5 起跳小六度到 Bb5 的"钟楼呼号"是记忆点（半音下滑似叹息），
+  // 两次陈述后以五度空心音 E5 收束；0 为休止
+  const RING_MELODY = [
+    587.33, 0, 0, 932.33,
+    880.00, 0, 783.99, 0,
+    587.33, 0, 0, 932.33,
+    880.00, 0, 659.25, 0
+  ];
+  function scheduleRingStep(step, time) {
+    // 低音点附节奏：半小节头上的长音 + 换和弦前的高八度顿音（顿音落在重拍后，推动和声）
+    const b = RING_BASS[step % RING_BASS.length];
+    if (b) bgmNote(b, time, RING_STEP * (step % 4 === 0 ? 3.2 : 0.8), 'sawtooth', step % 4 === 0 ? 0.18 : 0.15);
+    const m = RING_MELODY[step % RING_MELODY.length];
+    if (m) bgmNote(m, time, RING_STEP * 1.6, 'triangle', 0.13);
+    if (step % 8 === 0 || step % 8 === 4) bgmKick(time); // 1、3 拍重锤，沉重的步进感
+    if (step % 4 === 2) bgmHat(time);
+  }
+
+  // 掠袭者：E 小调追击曲——168 BPM 八分音符爬升低音 + 神经质断奏旋律 + 密集鼓点
+  const RAM_BPM = 168;
+  const RAM_STEP = 60 / RAM_BPM / 2;
+  // 驱动低音：Em → G → A → B(→D) 爬升，每步一个八分音符
+  const RAM_BASS = [
+    82.41, 82.41, 82.41, 82.41, 98.00, 98.00, 98.00, 98.00,
+    110.00, 110.00, 110.00, 110.00, 123.47, 123.47, 146.83, 123.47
+  ];
+  // 追击旋律：每小节首音踩在该小节低音根音上（E5→G5→A5→B5 随低音逐级爬升，
+  // 步步逼近），开头 F#5→G5 半音冲撞制造慌张，一路级进推到 D6 顶点后收束；0 为休止
+  const RAM_MELODY = [
+    659.26, 0, 783.99, 739.99,
+    783.99, 0, 880.00, 783.99,
+    880.00, 0, 987.77, 880.00,
+    987.77, 0, 1174.66, 0
+  ];
+  function scheduleRamerStep(step, time) {
+    bgmNote(RAM_BASS[step % RAM_BASS.length], time, RAM_STEP * 0.85, 'sawtooth', 0.13);
+    const m = RAM_MELODY[step % RAM_MELODY.length];
+    if (m) bgmNote(m, time, RAM_STEP * 0.9, 'square', 0.10);
+    if (step % 2 === 0) bgmKick(time);
+    bgmHat(time); // 每个八分音符都有踩镲，追击的急促感
+  }
+
+  // 曲目切换：Boss 登场切该型号专属曲，击败后切回卡农
+  const TRACKS = {
+    canon:    { fn: scheduleBgmStep,      stepDur: BGM_STEP },
+    flagship: { fn: scheduleFlagshipStep, stepDur: FLAG_STEP },
+    ring:     { fn: scheduleRingStep,     stepDur: RING_STEP },
+    ramer:    { fn: scheduleRamerStep,    stepDur: RAM_STEP }
+  };
+  let currentTrackKey = 'canon';
+  function setTrack(key) {
+    currentTrackKey = key;
+    music.step = 0; // 切换后从该曲开头播，避免接在半句上
+  }
+
+  function bgmScheduler() {
+    if (!audioCtx) return;
+    const tr = TRACKS[currentTrackKey];
+    while (music.nextNoteTime < audioCtx.currentTime + 0.12) {
+      tr.fn(music.step, music.nextNoteTime);
+      music.nextNoteTime += tr.stepDur;
+      music.step++;
+    }
+  }
+  function startBgm() {
+    initAudio();
+    if (!audioCtx || music.timer) return;
+    currentTrackKey = 'canon';
+    music.step = 0;
+    music.nextNoteTime = audioCtx.currentTime + 0.1;
+    music.timer = setInterval(bgmScheduler, 25);
+  }
+  function duckBgm(duck) {
+    if (!audioCtx || !musicGain) return;
+    const t = audioCtx.currentTime;
+    musicGain.gain.cancelScheduledValues(t);
+    musicGain.gain.setTargetAtTime(duck ? 0.1 : 0.3, t, 0.1);
+  }
+  function toggleMute() {
+    audioEnabled = !audioEnabled;
+    if (masterGain) masterGain.gain.value = audioEnabled ? 0.6 : 0;
+  }
+
+  // ================= INPUT =================
+  // 双人版输入拆分：P1 = 键盘（方向键/WASD 移动，Space/X 炸弹），P2 = 鼠标（移动跟随，左键炸弹）。
+  // P/Esc 暂停、M 静音为全局键。双人版不支持触屏（菜单有说明）。
+  const input = {
+    keys: {},            // P1：当前按下的键
+    pointerX: W / 2 + 70, // P2：指针位置（画布坐标，与 P2 出生的位置一致）
+    pointerY: H - 90,
+    lastPointer: 0       // P2：最近一次指针移动时间戳（判断指针是否"近期活跃"）
+  };
+
+  const MOVE_KEYS = new Set(['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'a', 'd', 'w', 's']);
+
+  window.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === 'm') { toggleMute(); return; }
+    if (k === 'p' || k === 'escape') { togglePause(); e.preventDefault(); return; }
+    if ((k === ' ' || k === 'x') && state === 'PLAYING') { useBomb(0); e.preventDefault(); return; } // P1 炸弹
+    input.keys[k] = true;
+    if (MOVE_KEYS.has(k) || k === ' ') e.preventDefault();
+    if (state !== 'PLAYING') tryStart();
+  });
+
+  window.addEventListener('keyup', (e) => {
+    input.keys[e.key.toLowerCase()] = false;
+  });
+
+  // P2 鼠标：在 window 上监听移动，指针移出画布也能继续追踪，把飞机推到边界
+  window.addEventListener('mousemove', (e) => {
+    const p = toCanvasPos(e.clientX, e.clientY);
+    input.pointerX = p.x; input.pointerY = p.y;
+    input.lastPointer = e.timeStamp;
+  });
+
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return; // 仅响应左键
+    if (state !== 'PLAYING') {
+      const p = toCanvasPos(e.clientX, e.clientY);
+      input.pointerX = p.x; input.pointerY = p.y;
+      input.lastPointer = e.timeStamp;
+      tryStart();
+      return;
+    }
+    useBomb(1); // 游戏中：鼠标左键任意位置（含右下炸弹按钮）= P2 释放炸弹
+  });
+
+  // ================= STATE =================
+  let state = 'MENU';     // MENU | PLAYING | PAUSED | GAMEOVER
+  let score = 0;
+  let players, bullets, enemyBullets, enemies, powerups, particles, floaters, stars;
+  let boss = null;            // 当前 Boss（无则为 null）
+  let bossLevel = 1;          // Boss 等级（影响血量/奖励，逐次递增）
+  let nextBossScore = CONFIG.boss.firstScore; // 下一个 Boss 登场的分数门槛
+  let wave = 1;               // 当前波次（随存活时间推进，驱动难度曲线）
+  let waveTimer = 0;          // 当前波次累计时间（毫秒）
+  let highScore = 0;          // 历史最高分（localStorage 持久化）
+  let newRecord = false;      // 本局是否打破最高分
+  let combo = 0;              // 当前连击数（击杀间隔 < 窗口则延续）
+  let comboUntil = 0;         // 连击到期时间戳（绝对时间，需进 togglePause 平移）
+  let maxCombo = 0;           // 本局最大连击（结算展示）
+  let killCount = 0;          // 本局击破数（结算展示）
+  let runTime = 0;            // 本局用时（毫秒，仅 PLAYING 态累计 → 暂停安全）
+  let grazeCount = 0;         // 本局擦弹总数（结算展示）
+  let grazeAcc = 0;           // 擦弹攒槽进度（满 CONFIG.graze.bombEvery 奖励炸弹）
+  let grazeSfxAt = 0;         // 擦弹音效限流时间戳（纯节流用，无需暂停平移）
+  const DIFF = { spawnInterval: CONFIG.enemy.spawnInterval, enemySpeedMul: 1, fireMul: 1 };
+  let spawnAcc = 0;
+  let pendingSpawns = [];  // 编队待入场成员（Boss 在场时冻结出队）
+  let formationCd = 0;     // 编队冷却（毫秒累计，仅更新中递减 → 暂停安全）
+  let lastTime = 0;
+  let pausedAt = 0;       // 进入暂停时的时间戳（用于恢复时平移计时器）
+  let gameOverAt = 0;     // 进入结束画面的时间戳（重开输入静置用）
+  let flashScreen = 0;    // 炸弹引爆时的全屏闪光强度（0~1）
+  let shake = 0;          // 受击震屏强度（0~1，映射到 hurtShake 像素）
+  let hurtFlash = 0;      // 受击红闪强度（0~1）
+
+  // 最近存活玩家（双人版：敌机 / Boss / 自爆机的瞄准目标）
+  function nearestPlayer(x, y) {
+    let best = null, bd = Infinity;
+    for (const p of players) {
+      if (!p.alive) continue;
+      const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+  }
+
+  // 由波次重算难度参数：刷怪更密、敌机更快、开火更频（双人版刷怪再乘 duo.spawnMul 补偿双倍火力）
+  function recomputeDiff() {
+    const w = wave;
+    DIFF.spawnInterval = Math.max(220, (CONFIG.enemy.spawnInterval - (w - 1) * 70) * CONFIG.duo.spawnMul);
+    DIFF.enemySpeedMul = 1 + (w - 1) * 0.08;
+    DIFF.fireMul = Math.max(0.45, 1 - (w - 1) * 0.06);
+  }
+
+  // 最高分持久化（双人版独立榜单，不与单人版混算；localStorage 不可用时静默降级）
+  const HS_KEY = 'airplane_highscore_2p';
+  function loadHighScore() {
+    try { highScore = parseInt(localStorage.getItem(HS_KEY) || '0', 10) || 0; } catch (e) { highScore = 0; }
+  }
+  function saveHighScore() {
+    try { localStorage.setItem(HS_KEY, String(highScore)); } catch (e) {}
+  }
+
+  // 加分并同步刷新最高分 / 新纪录标记
+  function addScore(n) {
+    score += n;
+    if (score > highScore) { highScore = score; newRecord = true; }
+  }
+
+  // 击杀结算：连击 +1 并刷新窗口，按当前倍率加分（owner 计入个人击破贡献）。
+  // 炸弹击杀照常计入（资源有界=爆发博弈）；Boss 击破走 addScore 保底、不进连击。
+  function killScore(base, time, owner) {
+    combo++;
+    killCount++;
+    if (owner !== undefined) players[owner].statKills++;
+    if (combo > maxCombo) maxCombo = combo;
+    comboUntil = time + CONFIG.combo.window;
+    if (combo === CONFIG.combo.maxCount) {
+      const a = players[owner !== undefined ? owner : 0];
+      floatText(a.x, a.y - 50, '连击 MAX！', '#ff8a5c');
+    }
+    addScore(Math.round(base * (1 + Math.min(combo, CONFIG.combo.maxCount) * CONFIG.combo.step)));
+  }
+
+  function reset() {
+    score = 0;
+    players = [new Player(0), new Player(1)];
+    bullets = [];
+    enemyBullets = [];
+    enemies = [];
+    powerups = [];
+    particles = [];
+    floaters = [];
+    boss = null;
+    setTrack('canon'); // 新一局无 Boss，背景乐切回卡农（修复阵亡于 Boss 后卡在战斗曲）
+    bossLevel = 1;
+    nextBossScore = CONFIG.boss.firstScore;
+    wave = 1;
+    waveTimer = 0;
+    newRecord = false;
+    combo = 0; comboUntil = 0; maxCombo = 0; killCount = 0; runTime = 0;
+    grazeCount = 0; grazeAcc = 0;
+    recomputeDiff();
+    spawnAcc = 0;
+    pendingSpawns = [];
+    formationCd = 0;
+  }
+
+  function startGame() {
+    reset();
+    state = 'PLAYING';
+    SFX.start();
+    startBgm();
+    duckBgm(false);
+  }
+
+  // 开始/重开：结束画面需静置 restartDelay 毫秒后才接受输入，避免手滑瞬间跳过结算统计
+  function tryStart() {
+    resumeAudio();
+    if (state === 'MENU') startGame();
+    else if (state === 'GAMEOVER' && performance.now() - gameOverAt >= CONFIG.ui.restartDelay) startGame();
+  }
+
+  // 暂停 / 继续（仅在"游戏中"与"暂停"之间切换）
+  function togglePause() {
+    if (state === 'PLAYING') {
+      state = 'PAUSED';
+      pausedAt = performance.now();
+      duckBgm(true);
+    } else if (state === 'PAUSED') {
+      // 暂停期间真实时间仍在流逝；把所有"绝对时间戳"型计时器整体后移暂停时长，
+      // 使暂停时间不计入火力/护盾衰减、无敌、开火节奏等
+      const shift = performance.now() - pausedAt;
+      for (const p of players) {
+        p.powerDecayAt += shift;
+        p.shieldUntil += shift;
+        p.invincibleUntil += shift;
+        p.lastFire += shift;
+      }
+      for (const e of enemies) if (e.nextFire !== undefined) e.nextFire += shift;
+      if (boss) boss.nextFire += shift;
+      comboUntil += shift; // 连击窗口同样不受暂停影响
+      state = 'PLAYING';
+      duckBgm(false);
+    }
+  }
+
+  // 玩家受击（双人版）：扣该机命数 + 僚机全损 + 缓冲护盾 + 强反馈；两机全灭才结束
+  function damagePlayer(p, time) {
+    if (!p.alive) return;
+    p.lives--;
+    if (combo >= 5) floatText(p.x, p.y + 26, '连击中断 ×' + combo, '#8aa0c8');
+    combo = 0; // 共享连击：任一人中弹即断
+    p.invincibleUntil = time + CONFIG.player.invincibleTime;
+    p.shieldUntil = time + CONFIG.player.hurtShieldDuration; // 可见护盾泡 = 喘息期
+    if (p.options.length > 0) {
+      for (const o of p.options) explode(o.x, o.y, '#7fd0ff', 8); // 僚机殉爆
+      p.options = [];
+      floatText(p.x, p.y - 40, '僚机损毁', '#7fd0ff');
+    }
+    explode(p.x, p.y, p.skin.body, 12);
+    explode(p.x, p.y, '#ff5a4a', 10);
+    floatText(p.x, p.y - 20, 'P' + (p.idx + 1) + ' 中弹！生命 -1', '#ff5a4a');
+    shake = 1;
+    hurtFlash = 1;
+    SFX.playerHit();
+    if (p.lives <= 0) {
+      explode(p.x, p.y, p.skin.body, 26);
+      if (players.every(q => q.lives <= 0)) { // 全灭才结束，先坠毁的观战
+        state = 'GAMEOVER';
+        gameOverAt = time;
+        saveHighScore();
+        SFX.gameOver();
+        duckBgm(true);
+      } else {
+        floatText(p.x, p.y - 60, 'P' + (p.idx + 1) + ' 坠毁', '#ff6b6b');
+      }
+    }
+  }
+
+  // Boss 被击败：大爆炸 + 奖励分 + 掉落 P/S/B 各一个 + 安排下一个 Boss
+  function defeatBoss() {
+    if (!boss) return;
+    SFX.bossExplode();
+    explode(boss.x, boss.y, '#ff8a5c', 42);
+    explode(boss.x - 32, boss.y, '#ffd24a', 22);
+    explode(boss.x + 32, boss.y, '#ffd24a', 22);
+    const reward = CONFIG.boss.score + bossLevel * CONFIG.boss.scorePerLevel;
+    killCount++; // Boss 击破计入击破数（但不进连击，保底分走 addScore）
+    addScore(reward);
+    floatText(boss.x, boss.y - 24, 'BOSS 击破 +' + reward, '#ffe066');
+    // 击败掉落：P / S / B 各一个（左右顺序随机），比清一色火力更有价值
+    const drops = ['power', 'shield', 'bomb'];
+    for (let i = drops.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      [drops[i], drops[j]] = [drops[j], drops[i]];
+    }
+    for (let k = 0; k < drops.length; k++) {
+      const offset = (k - (drops.length - 1) / 2) * 36;
+      powerups.push(new PowerUp(boss.x + offset, boss.y, drops[k]));
+    }
+    bossLevel++;
+    // 间隔按等差递增：越后面的 Boss 需要再涨越多分数，抵消后期分数涨速
+    nextBossScore = score + CONFIG.boss.gapScore + (bossLevel - 1) * CONFIG.boss.gapStep;
+    setTrack('canon'); // 击败 Boss 后切回卡农
+    boss = null;
+  }
+
+  // 释放炸弹（双人版按机结算）：清空敌弹 + 重伤全屏敌机/Boss + 该机短暂无敌 + 全屏闪光
+  function useBomb(idx) {
+    const p = players[idx];
+    if (state !== 'PLAYING' || !p || !p.alive || p.bombs <= 0) return;
+    p.bombs--;
+    p.invincibleUntil = performance.now() + CONFIG.skills.bombInvuln;
+    for (const eb of enemyBullets) explode(eb.x, eb.y, '#ff9a5a', 3);
+    enemyBullets.length = 0;
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const e = enemies[i];
+      e.hp -= CONFIG.skills.bombDamage;
+      if (e.hp <= 0) {
+        explode(e.x, e.y, e.def.color, 14);
+        killScore(e.scoreVal, performance.now(), idx); // 炸弹击杀照常计入连击，归属投弹者
+        enemies.splice(i, 1);
+      } else {
+        e.flash = 1;
+      }
+    }
+    if (boss) {
+      boss.hp -= CONFIG.skills.bossBombDamage;
+      boss.flash = 1;
+      if (boss.hp <= 0) defeatBoss();
+    }
+    SFX.bomb();
+    flashScreen = 1;
+  }
+
+  // 敌机击毁掉落（火力 / 护盾 / 炸弹，互斥；重型机概率更高）
+  function maybeDrop(x, y, heavy) {
+    const boost = heavy ? 2.2 : 1;
+    const r = Math.random();
+    const pBomb = 0.03 * boost, pShield = 0.04 * boost, pPower = CONFIG.powerup.dropChance * boost;
+    if (r < pBomb) powerups.push(new PowerUp(x, y, 'bomb'));
+    else if (r < pBomb + pShield) powerups.push(new PowerUp(x, y, 'shield'));
+    else if (r < pBomb + pShield + pPower) powerups.push(new PowerUp(x, y, 'power'));
+  }
+
+  // ================= ENTITIES =================
+  // 双人配色：P1 键盘位蓝色 / P2 鼠标位银白（机身/机翼/座舱/主弹各一色）
+  const PLAYER_SKINS = [
+    { body: '#4aa3ff', wing: '#2b6cb0', cockpit: '#d6ecff', bullet: '#ffe066' },
+    { body: '#d8e0ea', wing: '#8a97b8', cockpit: '#4a5570', bullet: '#cfe2ff' }
+  ];
+
+  class Player {
+    constructor(idx) {
+      this.idx = idx;             // 0 = P1 键盘位 / 1 = P2 鼠标位
+      this.skin = PLAYER_SKINS[idx];
+      this.w = CONFIG.player.width;
+      this.h = CONFIG.player.height;
+      this.hitW = CONFIG.player.hitW; // 判定核（受击判定用）
+      this.hitH = CONFIG.player.hitH;
+      this.x = W / 2 + (idx === 0 ? -70 : 70); // 左右分列入场
+      this.y = H - 90;
+      this.lives = CONFIG.player.maxLives;
+      this.power = 1; // 当前火力等级（1..maxPower）
+      this.powerDecayAt = 0; // 火力衰减时间戳（到点降一级）
+      this.options = [];     // 僚机列表（满级吃 P 转化；不随火力衰减，受击全部损毁）
+      this.bombs = 1;        // 炸弹库存（开局送 1 颗）
+      this.shieldUntil = 0;  // 护盾到期时间戳（>当前时间表示护盾中）
+      this.lastFire = 0;
+      this.invincibleUntil = 0;
+      this.statKills = 0;    // 个人击破数（结算贡献展示）
+      this.statGrazes = 0;   // 个人擦弹数（结算贡献展示）
+    }
+
+    get alive() { return this.lives > 0; }
+
+    update(dt, time) {
+      if (!this.alive) return;
+
+      // 火力随时间衰减：超过一定时长未拾取道具则降一级（最低 Lv1）
+      if (this.power > 1 && time >= this.powerDecayAt) {
+        this.power--;
+        this.powerDecayAt = time + CONFIG.player.powerDecayInterval;
+      }
+
+      if (this.idx === 0) {
+        // P1 键盘移动
+        const k = input.keys;
+        const left = k['arrowleft'] || k['a'];
+        const right = k['arrowright'] || k['d'];
+        const up = k['arrowup'] || k['w'];
+        const down = k['arrowdown'] || k['s'];
+        let vx = (right ? 1 : 0) - (left ? 1 : 0);
+        let vy = (down ? 1 : 0) - (up ? 1 : 0);
+        if (vx && vy) { const inv = 1 / Math.SQRT2; vx *= inv; vy *= inv; }
+        this.x += vx * CONFIG.player.speed * dt;
+        this.y += vy * CONFIG.player.speed * dt;
+      } else if (time - input.lastPointer < 1500) {
+        // P2 指针跟随：仅在指针"近期移动过"时接管，避免静止指针把飞机吸过去；
+        // 以不超过键盘最大速度追赶——近距精确吸附、远距限速追赶（与 P1 对等）
+        const dx = input.pointerX - this.x;
+        const dy = input.pointerY - this.y;
+        const dist = Math.hypot(dx, dy);
+        const step = CONFIG.player.speed * dt;
+        if (dist > step) {
+          this.x += dx / dist * step;
+          this.y += dy / dist * step;
+        } else {
+          this.x += dx; // 距离很小时 1:1 精确吸附
+          this.y += dy;
+        }
+      }
+
+      this.x = clamp(this.x, this.w / 2, W - this.w / 2);
+      this.y = clamp(this.y, this.h / 2, H - this.h / 2);
+
+      // 僚机阻尼跟随（纯位置状态、无绝对时间戳计时器，暂停天然安全）
+      for (const o of this.options) o.update(dt);
+
+      // 自动开火
+      if (time - this.lastFire >= CONFIG.player.fireInterval) {
+        this.lastFire = time;
+        this.fire();
+      }
+    }
+
+    // 按当前火力等级发射子弹（水平偏移 + 散射角度）；僚机同步直射小弹
+    fire() {
+      const pattern = FIRE_PATTERNS[Math.min(this.power, FIRE_PATTERNS.length) - 1];
+      for (const shot of pattern) {
+        bullets.push(new Bullet(this.x + shot.ox, this.y - this.h / 2, shot.a, false, this.idx));
+      }
+      for (const o of this.options) o.fire();
+    }
+
+    draw(time) {
+      if (!this.alive) return;
+      // 无敌期间闪烁
+      if (time < this.invincibleUntil && Math.floor(time / 90) % 2 === 0) return;
+      for (const o of this.options) o.draw(time); // 僚机先画，机身覆盖其上，闪烁与机身同步
+      const { x, y, w, h } = this;
+      ctx.save();
+      ctx.translate(x, y);
+
+      // 机翼
+      ctx.fillStyle = this.skin.wing;
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.5, h * 0.18);
+      ctx.lineTo(0, -h * 0.05);
+      ctx.lineTo(w * 0.5, h * 0.18);
+      ctx.lineTo(w * 0.22, h * 0.3);
+      ctx.lineTo(-w * 0.22, h * 0.3);
+      ctx.closePath(); ctx.fill();
+
+      // 机身
+      ctx.fillStyle = this.skin.body;
+      ctx.beginPath();
+      ctx.moveTo(0, -h * 0.5);
+      ctx.lineTo(w * 0.14, h * 0.3);
+      ctx.lineTo(-w * 0.14, h * 0.3);
+      ctx.closePath(); ctx.fill();
+
+      // 尾翼
+      ctx.fillStyle = this.skin.wing;
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.18, h * 0.42);
+      ctx.lineTo(0, h * 0.26);
+      ctx.lineTo(w * 0.18, h * 0.42);
+      ctx.lineTo(w * 0.08, h * 0.5);
+      ctx.lineTo(-w * 0.08, h * 0.5);
+      ctx.closePath(); ctx.fill();
+
+      // 驾驶舱
+      ctx.fillStyle = this.skin.cockpit;
+      ctx.beginPath(); ctx.arc(0, -h * 0.08, w * 0.09, 0, Math.PI * 2); ctx.fill();
+
+      // 引擎喷焰
+      ctx.fillStyle = '#ffcf6b';
+      ctx.beginPath(); ctx.arc(-w * 0.07, h * 0.33, 2.2, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(w * 0.07, h * 0.33, 2.2, 0, Math.PI * 2); ctx.fill();
+
+      // 判定核指示点（让玩家看清真实受击范围）
+      ctx.fillStyle = '#ff4d6d';
+      ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fill();
+
+      ctx.restore();
+
+      // 护盾泡 + 剩余时间条（世界坐标，覆盖在玩家外圈）
+      if (time < this.shieldUntil) {
+        const remain = Math.max(0, Math.min(1, (this.shieldUntil - time) / CONFIG.skills.shieldDuration));
+        ctx.save();
+        ctx.globalAlpha = 0.35 + Math.sin(time / 120) * 0.1;
+        ctx.strokeStyle = '#5fffe0';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.w * 0.85, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.restore();
+        // 护盾剩余时间条（玩家正上方，随时间缩短，临尽变红）
+        const bw = this.w, bh = 3, bx = this.x - bw / 2, by = this.y - this.h / 2 - 9;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+        ctx.fillStyle = remain > 0.4 ? '#5fffe0' : '#ff5a4a';
+        ctx.fillRect(bx, by, bw * remain, bh);
+      }
+    }
+  }
+
+  class Bullet {
+    constructor(x, y, angle = 0, small = false, owner = 0) {
+      this.small = small; // 僚机小弹：更细更短，青色以示区分
+      this.owner = owner; // 归属玩家（击杀计入个人贡献）
+      this.w = small ? CONFIG.option.bulletW : CONFIG.bullet.width;
+      this.h = small ? CONFIG.option.bulletH : CONFIG.bullet.height;
+      this.x = x; this.y = y;
+      const s = CONFIG.bullet.speed;
+      this.vx = Math.sin(angle) * s;
+      this.vy = -Math.cos(angle) * s; // 负值 = 向上
+    }
+    update(dt) { this.x += this.vx * dt; this.y += this.vy * dt; }
+    draw() {
+      const c = this.small ? '#7fd0ff' : PLAYER_SKINS[this.owner].bullet;
+      ctx.fillStyle = c;
+      ctx.shadowColor = c;
+      ctx.shadowBlur = 8;
+      ctx.fillRect(this.x - this.w / 2, this.y - this.h / 2, this.w, this.h);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  // 僚机（Option）：满级火力后吃 P 转化的小型浮游炮，阻尼跟随宿主并随主炮同步开火。
+  // 无敌、无碰撞判定；无绝对时间戳计时器（暂停无需平移处理）。
+  class Option {
+    constructor(side, host) { // side: -1 左侧 / +1 右侧；host: 所属玩家（双人各自拥有僚机）
+      this.side = side;
+      this.host = host;
+      this.owner = host.idx;
+      this.w = 14; this.h = 14;
+      this.x = host.x + side * CONFIG.option.offsetX;
+      this.y = host.y + CONFIG.option.offsetY; // 左右僚机同高（仅水平镜像）
+      this.phase = rand(0, Math.PI * 2);
+    }
+
+    update(dt) {
+      // 向目标点插值：快移时略微拖后，形成"编队感"
+      const tx = this.host.x + this.side * CONFIG.option.offsetX;
+      const ty = this.host.y + this.side * CONFIG.option.offsetY;
+      this.x += (tx - this.x) * CONFIG.option.followEase * dt;
+      this.y += (ty - this.y) * CONFIG.option.followEase * dt;
+    }
+
+    fire() {
+      bullets.push(new Bullet(this.x, this.y - this.h / 2, 0, true, this.owner));
+    }
+
+    draw(time) {
+      const pulse = 1 + Math.sin(time / 160 + this.phase) * 0.12;
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.scale(pulse, pulse);
+      ctx.shadowColor = '#7fd0ff';
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = '#4aa3ff';
+      ctx.beginPath(); ctx.arc(0, 0, this.w / 2, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#d6ecff';
+      ctx.beginPath(); ctx.arc(0, 0, this.w / 2 * 0.45, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  class Enemy {
+    constructor(type, opts = {}) {
+      const t = ENEMY_TYPES[type];
+      this.type = type;
+      this.def = t;
+      this.w = t.w; this.h = t.h;
+      this.x = opts.x !== undefined ? opts.x : rand(this.w / 2, W - this.w / 2);
+      this.y = opts.y !== undefined ? opts.y : -this.h / 2;
+      this.hp = t.hp;
+      this.maxHp = t.hp;
+      this.speed = t.speed * (opts.speedMul !== undefined ? opts.speedMul : 1);
+      this.scoreVal = t.score;
+      this.phase = rand(0, Math.PI * 2);
+      this.sway = t.sway * (opts.swayMul !== undefined ? opts.swayMul : 1); // 编队成员可调小摇摆保持队形
+      this.vx = opts.vx || 0;   // 侧向速度（编队侧向突入；自爆机巡航用）
+      this.locked = false;      // 自爆机：已锁定
+      this.lockT = 0;           // 自爆机：锁定后的蓄力帧数
+      this.dashVx = 0;          // 自爆机：冲刺水平速度
+      this.diveVy = 0;          // 自爆机：冲刺垂直速度
+      this.bursts = 0;          // 悬浮炮：已发射的环形弹幕轮数（用于逐轮旋转）
+      this.flash = 0;           // 受击白闪计时
+      this.nextFire = undefined; // 首次开火时间（惰性赋值以错开节奏）
+    }
+
+    update(dt, time) {
+      this.flash = Math.max(0, this.flash - 0.08 * dt);
+
+      // 自爆机已锁定：先闪烁蓄力示警（公平预警），蓄力满后朝锁定位置直线冲刺。
+      // 冲刺向量在锁定瞬间捕获、不追踪——蓄力+冲刺期间移动即可躲开
+      if (this.locked) {
+        this.lockT += dt;
+        if (this.lockT >= this.def.dive.windup) {
+          this.x += this.dashVx * dt;
+          this.y += this.diveVy * dt;
+          if (Math.random() < 0.6) explode(this.x, this.y, '#ffb13b', 1); // 冲刺尾焰
+        } else {
+          // 蓄力期间继续减速侧滑逼近，制造压迫
+          this.x += this.vx * 0.5 * dt;
+          this.y += this.speed * DIFF.enemySpeedMul * dt;
+        }
+        return;
+      }
+
+      // 悬浮炮：入场 → 悬停环形弹幕 → 加速撤离（this.t 为帧累计，暂停安全）
+      if (this.def.hover) {
+        if (this.hoverY === undefined) {
+          this.hoverY = rand(this.def.hover.yMin, this.def.hover.yMax);
+          this.t = 0;
+        }
+        if (this.leaving) { this.y += 2.6 * DIFF.enemySpeedMul * dt; return; }
+        if (this.y < this.hoverY) {
+          this.y += this.speed * DIFF.enemySpeedMul * dt;
+          if (this.y >= this.hoverY) { // 到位：短暂蓄力后首射，并飘字明示玩家
+            this.y = this.hoverY;
+            this.nextFire = time + 700;
+            floatText(this.x, this.y - 34, '悬浮炮!', '#ff9a8a');
+          }
+          return;
+        }
+        this.t += dt;
+        this.x = clamp(this.x + Math.sin(this.t * 0.03) * 0.5 * dt, this.w / 2, W - this.w / 2); // 缓慢横移
+        if (this.t > this.def.hover.frames) { this.leaving = true; return; }
+        if (time >= this.nextFire) {
+          this.nextFire = time + this.def.fireInterval * DIFF.fireMul;
+          this.fire();
+        }
+        return;
+      }
+
+      // 普通下落（含编队侧向漂移 vx；有侧向速度时不钳制，允许穿出屏幕）
+      this.y += this.speed * DIFF.enemySpeedMul * dt;
+      this.x += (Math.sin(this.phase + this.y * 0.03) * this.sway + this.vx) * dt;
+      if (!this.vx) this.x = clamp(this.x, this.w / 2, W - this.w / 2);
+
+      // 自爆锁定检测：横向逼近到范围内且未低于目标，即锁定最近的存活玩家
+      if (this.def.dive) {
+        const tp = nearestPlayer(this.x, this.y);
+        if (tp && this.y < tp.y + 40 && Math.abs(tp.x - this.x) < this.def.dive.range) {
+          const dx = tp.x - this.x, dy = tp.y - this.y;
+          const d = Math.hypot(dx, dy) || 1;
+          this.dashVx = dx / d * this.def.dive.speed;
+          this.diveVy = dy / d * this.def.dive.speed;
+          this.locked = true;
+          this.lockT = 0;
+          return;
+        }
+      }
+
+      // 开火：仅在尚未越过最近玩家（位于其上方）时开火，避免越过后往回射击
+      if (this.def.fireInterval) {
+        const tp = nearestPlayer(this.x, this.y);
+        if (tp && this.y < tp.y) {
+          const fi = this.def.fireInterval * DIFF.fireMul; // 波次越高开火越快
+          if (this.nextFire === undefined) {
+            this.nextFire = time + rand(fi * 0.5, fi * 1.3);
+          }
+          if (time >= this.nextFire) {
+            this.nextFire = time + fi;
+            this.fire();
+          }
+        }
+      }
+    }
+
+    // 悬浮炮环形弹幕 / 扇形弹幕机种（fan: n 发/张角）/ 其余单发瞄准（均以最近玩家为基准）
+    fire() {
+      const speed = CONFIG.enemyBullet.speed;
+      const ox = this.x, oy = this.y + this.h / 2;
+      const tp = nearestPlayer(ox, oy);
+      if (!tp) return;
+      const dx = tp.x - ox, dy = tp.y - oy;
+      if (this.def.hover && this.def.hover.ring) {
+        // 以玩家方向为基准的整圈弹幕，逐轮旋转错开，逼玩家走位拆解
+        const ring = this.def.hover.ring;
+        ringBurst(ox, oy, ring.n, Math.atan2(dy, dx) + this.bursts * ring.spin);
+        this.bursts++;
+        SFX.turret();
+        return;
+      }
+      if (this.def.fan) {
+        const { n, spread } = this.def.fan;
+        const base = Math.atan2(dy, dx);
+        for (let i = 0; i < n; i++) {
+          const a = base - spread / 2 + spread * (i / (n - 1));
+          enemyBullets.push(new EnemyBullet(ox, oy, Math.cos(a) * speed, Math.sin(a) * speed));
+        }
+      } else {
+        const d = Math.hypot(dx, dy) || 1;
+        enemyBullets.push(new EnemyBullet(ox, oy, dx / d * speed, dy / d * speed));
+      }
+    }
+
+    draw(time) {
+      const { x, y, w, h } = this;
+      const hot = this.locked && Math.floor(time / 80) % 2 === 0; // 自爆锁定后白热闪烁示警
+      ctx.save();
+      ctx.translate(x, y);
+      // 自爆机机头始终朝向行进方向（侧向巡航 / 锁定冲刺），其余敌机保持机头朝下
+      if (this.def.dive) {
+        const dashing = this.locked && this.lockT >= this.def.dive.windup;
+        const dxv = dashing ? this.dashVx : this.vx;
+        const dyv = dashing ? this.diveVy : this.speed * DIFF.enemySpeedMul;
+        if (dxv || dyv) ctx.rotate(Math.atan2(dxv, dyv)); // 机头默认朝 +y，旋到行进方向
+      }
+      // 机翼
+      ctx.fillStyle = this.def.color2;
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.5, -h * 0.18);
+      ctx.lineTo(0, h * 0.05);
+      ctx.lineTo(w * 0.5, -h * 0.18);
+      ctx.lineTo(w * 0.22, -h * 0.3);
+      ctx.lineTo(-w * 0.22, -h * 0.3);
+      ctx.closePath(); ctx.fill();
+      // 机身（机头朝下）
+      ctx.fillStyle = hot ? '#ffffff' : this.def.color;
+      ctx.beginPath();
+      ctx.moveTo(0, h * 0.5);
+      ctx.lineTo(w * 0.14, -h * 0.3);
+      ctx.lineTo(-w * 0.14, -h * 0.3);
+      ctx.closePath(); ctx.fill();
+      // 驾驶舱（悬浮炮为红色发光核心，提升辨识度）
+      if (this.def.hover) { ctx.shadowColor = '#ff5a4a'; ctx.shadowBlur = 10; }
+      ctx.fillStyle = this.def.cockpit;
+      ctx.beginPath(); ctx.arc(0, h * 0.1, w * 0.09, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // 悬浮炮充能警示：开火前 0.35 秒外圈红环向内收缩提示
+      if (this.def.hover && !this.leaving && this.nextFire !== undefined && time > this.nextFire - 350) {
+        const p = clamp((time - (this.nextFire - 350)) / 350, 0, 1);
+        ctx.strokeStyle = '#ff5a4a';
+        ctx.globalAlpha = 0.85 - p * 0.45;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, w * 0.55 + (1 - p) * 14, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      // 受击白闪
+      if (this.flash > 0) {
+        ctx.globalAlpha = this.flash * 0.6;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(0, 0, w * 0.46, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+
+      // 血条（仅多血敌机受伤时显示）
+      if (this.maxHp > 1 && this.hp < this.maxHp) {
+        const bw = w, bh = 3;
+        const bx = x - bw / 2, by = y - h / 2 - 8;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+        ctx.fillStyle = this.hp / this.maxHp > 0.4 ? '#7CFC00' : '#ff5a4a';
+        ctx.fillRect(bx, by, bw * (this.hp / this.maxHp), bh);
+      }
+    }
+  }
+
+  class EnemyBullet {
+    constructor(x, y, vx, vy) {
+      this.w = 8; this.h = 8;
+      this.x = x; this.y = y;
+      this.vx = vx; this.vy = vy;
+      this.grazed = false; // 已被擦过（每颗弹只计一次擦弹）
+    }
+    update(dt) { this.x += this.vx * dt; this.y += this.vy * dt; }
+    draw() {
+      ctx.fillStyle = 'rgba(255,91,110,0.35)';
+      ctx.beginPath(); ctx.arc(this.x, this.y, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ff5b6e';
+      ctx.beginPath(); ctx.arc(this.x, this.y, 3.5, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  class PowerUp {
+    constructor(x, y, type = 'power') {
+      this.w = 26; this.h = 26;
+      this.x = x; this.y = y;
+      this.type = type;
+      this.def = POWERUP_TYPES[type];
+      this.phase = rand(0, Math.PI * 2);
+    }
+    update(dt) {
+      this.y += CONFIG.powerup.fallSpeed * dt;
+      this.phase += 0.06 * dt;
+    }
+    draw(time) {
+      const pulse = 1 + Math.sin(time / 150 + this.phase) * 0.12;
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.scale(pulse, pulse);
+      ctx.shadowColor = this.def.glow;
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = this.def.color;
+      ctx.beginPath(); ctx.arc(0, 0, this.w / 2, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = this.def.inner;
+      ctx.beginPath(); ctx.arc(0, 0, this.w / 2 * 0.62, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = this.def.ink;
+      ctx.font = 'bold 16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(this.def.label, 0, 1);
+      ctx.restore();
+    }
+  }
+
+  // Boss：三种型号共用 入场/阶段划分/血条/掉落/暂停平移 框架，
+  // 移动与攻击按 BOSS_TYPES 的 move/phases 分支实现
+  class Boss {
+    constructor(level, typeKey) {
+      const def = BOSS_TYPES[typeKey];
+      this.type = typeKey;
+      this.def = def;
+      this.level = level;
+      this.w = def.w; this.h = def.h;
+      this.x = W / 2;
+      this.y = -this.h;       // 从画面上方入场
+      this.targetY = 120;     // 入场后悬停的 y
+      this.entered = false;
+      this.maxHp = Math.round(CONFIG.boss.baseHp * def.hpMul + (level - 1) * CONFIG.boss.hpPerLevel);
+      this.hp = this.maxHp;
+      this.phase = 1;
+      this.nextFire = 0;
+      this.t = 0;             // 帧累计：运动/呼吸/螺旋节奏（暂停安全）
+      this.flash = 0;
+      this.bursts = 0;        // 环堡：已发圈数（整圈旋转基准）
+      this.spiralA = 0;       // 环堡：螺旋流当前发射角
+      this.spiralTick = 0;    // 环堡：螺旋流帧计数
+      this.state = 'pause';   // 掠袭者：pause 停顿 / charge 蓄力 / dash 冲刺
+      this.stateT = 0;        // 掠袭者：当前状态帧数
+      this.dir = Math.random() < 0.5 ? 1 : -1; // 掠袭者：冲刺方向
+      this.pauseY = 120;      // 掠袭者：本次停顿的目标高度
+    }
+
+    update(dt, time) {
+      this.t += dt;
+      this.flash = Math.max(0, this.flash - 0.08 * dt);
+
+      // 入场：下移到悬停位（各型通用）
+      if (!this.entered) {
+        this.y += 1.5 * dt;
+        if (this.y >= this.targetY) {
+          this.y = this.targetY;
+          this.entered = true;
+          this.nextFire = time + 600;
+        }
+        return; // 入场期间不开火
+      }
+
+      // 按血量划分攻击阶段（各型通用）
+      const r = this.hp / this.maxHp;
+      this.phase = r > 0.66 ? 1 : r > 0.33 ? 2 : 3;
+      const cfg = this.def.phases[this.phase - 1];
+
+      // 移动模式
+      if (this.def.move === 'cruise') {
+        // 左右巡航 + 轻微上下浮动
+        const margin = W / 2 - this.w / 2 - 12;
+        this.x = W / 2 + Math.sin(this.t * 0.02) * margin;
+        this.y = this.targetY + Math.sin(this.t * 0.03) * 8;
+      } else if (this.def.move === 'drift') {
+        // 顶部缓慢漂移，血量越低漂得越快
+        const spd = 0.012 + (1 - r) * 0.02;
+        this.x = W / 2 + Math.sin(this.t * spd) * (W / 2 - this.w / 2 - 16);
+        this.y = this.targetY + Math.sin(this.t * 0.025) * 10;
+      } else {
+        this.updateDash(dt, cfg);
+      }
+
+      // 螺旋流（环堡阶段 3）：独立于 nextFire 的帧节奏，每 every 帧一臂、角度持续递增；
+      // arms>1 为多臂螺旋（各臂均分圆周），缝隙成倍收紧
+      if (cfg.spiral) {
+        this.spiralTick += dt;
+        while (this.spiralTick >= cfg.spiral.every) {
+          this.spiralTick -= cfg.spiral.every;
+          this.spiralA += cfg.spiral.step;
+          const arms = cfg.spiral.arms || 1;
+          for (let k = 0; k < arms; k++) {
+            const a = this.spiralA + Math.PI * 2 * k / arms;
+            enemyBullets.push(new EnemyBullet(this.x, this.y + this.h / 2 - 6,
+              Math.cos(a) * CONFIG.enemyBullet.speed,
+              Math.sin(a) * CONFIG.enemyBullet.speed));
+          }
+        }
+      }
+
+      // 开火
+      if (time >= this.nextFire) this.fire(time);
+    }
+
+    // 掠袭者冲刺状态机：停顿(开火) → 蓄力预警(闪烁) → 横向冲刺(沿途撒弹) → 对侧停顿
+    updateDash(dt, cfg) {
+      this.stateT += dt;
+      if (this.state === 'pause') {
+        this.y += (this.pauseY - this.y) * 0.06 * dt; // 缓慢逼近本次停顿高度
+        if (this.stateT >= (this.phase === 3 ? 55 : 70)) { this.state = 'charge'; this.stateT = 0; }
+      } else if (this.state === 'charge') {
+        this.flash = Math.floor(this.stateT / 8) % 2 === 0 ? 1 : 0; // 蓄力预警闪烁
+        if (this.stateT >= 30) { // 0.5s 预警后起冲
+          this.state = 'dash';
+          this.stateT = 0;
+          SFX.dash();
+        }
+      } else { // dash
+        this.x += this.dir * 7 * dt;
+        // 沿途撒弹：身后留下慢速垂直下落弹，形成必须找缺口穿的横墙
+        if (cfg.trail) {
+          this.trailAcc = (this.trailAcc || 0) + dt;
+          if (this.trailAcc >= 7) {
+            this.trailAcc = 0;
+            for (let k = 0; k < cfg.trail; k++) {
+              enemyBullets.push(new EnemyBullet(
+                this.x - this.dir * this.w * 0.4, this.y + k * 12 + rand(-4, 8),
+                0, 1.8)); // 慢速下落
+            }
+          }
+        }
+        const edge = this.dir > 0 ? W - this.w / 2 - 8 : this.w / 2 + 8;
+        if ((this.dir > 0 && this.x >= edge) || (this.dir < 0 && this.x <= edge)) {
+          this.dir = -this.dir;
+          this.state = 'pause';
+          this.stateT = 0;
+          this.nextFire = 0; // 到侧立即获得开火机会
+          // 下次停顿高度：阶段越高压得越低（阶段 3 最低到 y≈260）
+          this.pauseY = rand(this.phase === 3 ? 130 : 110, this.phase === 3 ? 260 : 200);
+        }
+      }
+    }
+
+    // 各型开火：参数取自 BOSS_TYPES.phases[phase-1]，瞄准最近的存活玩家
+    fire(time) {
+      const cfg = this.def.phases[this.phase - 1];
+      const speed = CONFIG.enemyBullet.speed;
+      const ox = this.x, oy = this.y + this.h / 2 - 6;
+      const tp = nearestPlayer(ox, oy);
+      if (!tp) return;
+      const base = Math.atan2(tp.y - oy, tp.x - ox);
+      const shoot = (a) => enemyBullets.push(new EnemyBullet(ox, oy, Math.cos(a) * speed, Math.sin(a) * speed));
+
+      if (this.type === 'flagship') {
+        this.nextFire = time + cfg.interval;
+        for (const off of cfg.shots) shoot(base + off);
+        if (cfg.vert) { shoot(Math.PI / 2 - 0.25); shoot(Math.PI / 2 + 0.25); } // 双垂直弹
+      } else if (this.type === 'ring') {
+        this.nextFire = time + cfg.interval;
+        ringBurst(ox, oy, cfg.ring.n, base + this.bursts * cfg.ring.spin);
+        if (cfg.rings === 2) ringBurst(ox, oy, cfg.ring.n, base + (this.bursts + 0.5) * cfg.ring.spin); // 双圈相位差
+        this.bursts++;
+        SFX.turret(); // 环堡与悬浮炮同源，共用音效
+      } else { // ramer：仅停顿时开火，冲刺/蓄力中跳过（回到停顿立即补射）
+        if (this.state !== 'pause') return;
+        this.nextFire = time + cfg.interval;
+        for (const off of cfg.shots) shoot(base + off);
+        if (cfg.column) { // 阶段 3：停顿时垂直弹幕柱
+          for (let k = 0; k < cfg.column; k++) {
+            enemyBullets.push(new EnemyBullet(ox + (k - (cfg.column - 1) / 2) * 26, oy, 0, speed));
+          }
+        }
+      }
+    }
+
+    draw() {
+      const { x, y, w, h } = this;
+      ctx.save();
+      ctx.translate(x, y);
+
+      if (this.type === 'flagship') {
+        // 侧翼
+        ctx.fillStyle = '#4a1d28';
+        ctx.beginPath();
+        ctx.moveTo(-w * 0.5, -h * 0.05); ctx.lineTo(-w * 0.32, h * 0.28); ctx.lineTo(-w * 0.2, h * 0.18);
+        ctx.closePath(); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(w * 0.5, -h * 0.05); ctx.lineTo(w * 0.32, h * 0.28); ctx.lineTo(w * 0.2, h * 0.18);
+        ctx.closePath(); ctx.fill();
+
+        // 主体（六边形）
+        ctx.fillStyle = '#6b2a3a';
+        ctx.beginPath();
+        ctx.moveTo(0, -h * 0.5);
+        ctx.lineTo(w * 0.42, -h * 0.18);
+        ctx.lineTo(w * 0.36, h * 0.34);
+        ctx.lineTo(0, h * 0.5);
+        ctx.lineTo(-w * 0.36, h * 0.34);
+        ctx.lineTo(-w * 0.42, -h * 0.18);
+        ctx.closePath(); ctx.fill();
+
+        // 前部炮管
+        ctx.fillStyle = '#3a3a44';
+        ctx.fillRect(-w * 0.24, h * 0.18, 9, 20);
+        ctx.fillRect(w * 0.24 - 9, h * 0.18, 9, 20);
+      } else if (this.type === 'ring') {
+        // 外环装甲带
+        ctx.strokeStyle = '#4a5570';
+        ctx.lineWidth = 10;
+        ctx.beginPath(); ctx.arc(0, 0, w * 0.42, 0, Math.PI * 2); ctx.stroke();
+        // 旋转炮舱（随 t 公转）
+        ctx.fillStyle = '#8a97b8';
+        for (let i = 0; i < 8; i++) {
+          const a = this.t * 0.02 + Math.PI * 2 * i / 8;
+          ctx.save();
+          ctx.translate(Math.cos(a) * w * 0.42, Math.sin(a) * w * 0.42);
+          ctx.rotate(a);
+          ctx.fillRect(-7, -5, 14, 10);
+          ctx.restore();
+        }
+        // 内环装甲
+        ctx.fillStyle = '#3a4258';
+        ctx.beginPath(); ctx.arc(0, 0, w * 0.26, 0, Math.PI * 2); ctx.fill();
+      } else {
+        // 掠袭者：宽三角掠翼、机头朝下
+        ctx.fillStyle = '#4a1d5a';
+        ctx.beginPath();
+        ctx.moveTo(0, h * 0.5);
+        ctx.lineTo(w * 0.5, -h * 0.2);
+        ctx.lineTo(w * 0.18, -h * 0.38);
+        ctx.lineTo(-w * 0.18, -h * 0.38);
+        ctx.lineTo(-w * 0.5, -h * 0.2);
+        ctx.closePath(); ctx.fill();
+        // 机身脊线
+        ctx.fillStyle = '#a355d8';
+        ctx.beginPath();
+        ctx.moveTo(0, h * 0.5);
+        ctx.lineTo(w * 0.13, -h * 0.32);
+        ctx.lineTo(-w * 0.13, -h * 0.32);
+        ctx.closePath(); ctx.fill();
+        // 座舱感光点
+        ctx.fillStyle = '#ffd0ff';
+        ctx.beginPath(); ctx.arc(0, h * 0.1, w * 0.05, 0, Math.PI * 2); ctx.fill();
+        // 双引擎喷焰（冲刺时拉长）
+        const flame = this.state === 'dash' ? 1.8 : 1;
+        ctx.fillStyle = '#ff8a5c';
+        ctx.fillRect(-w * 0.12, -h * 0.38 - 9 * flame, 6, 9 * flame);
+        ctx.fillRect(w * 0.12 - 6, -h * 0.38 - 9 * flame, 6, 9 * flame);
+      }
+
+      // 核心弱点（随阶段变红 + 脉冲呼吸；环堡红核承接悬浮炮的视觉语言）
+      const pulse = 1 + Math.sin(this.t * 0.12) * 0.15;
+      const core = this.phase === 3 ? '#ff3b3b' : this.phase === 2 ? '#ff7a3b' : '#ffb13b';
+      ctx.shadowColor = core;
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = core;
+      const cr = (this.type === 'ring' ? 16 : 13) * pulse;
+      ctx.beginPath(); ctx.arc(0, 0, cr, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff7e6';
+      ctx.beginPath(); ctx.arc(0, 0, cr * 0.38, 0, Math.PI * 2); ctx.fill();
+
+      // 受击白闪
+      if (this.flash > 0) {
+        ctx.globalAlpha = this.flash * 0.5;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(0, 0, Math.max(w, h) * 0.42, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    }
+  }
+
+  // ================= EFFECTS =================
+  // 飘字（拾取提示 / 得分弹字）
+  function floatText(x, y, text, color) {
+    floaters.push({ x, y, text, color, life: 1, vy: -0.6 });
+  }
+
+  function explode(x, y, color, count = 14) {
+    for (let i = 0; i < count; i++) {
+      const a = rand(0, Math.PI * 2);
+      const sp = rand(1, 4);
+      particles.push({
+        x, y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        life: 1,
+        decay: rand(0.02, 0.045),
+        size: rand(1.5, 3.5),
+        color
+      });
+    }
+  }
+
+  function initStars() {
+    stars = [];
+    for (let i = 0; i < 130; i++) {
+      const layer = (Math.random() * 3) | 0; // 0..2 视差层
+      stars.push({
+        x: rand(0, W),
+        y: rand(0, H),
+        speed: 0.3 + layer * 0.7,
+        size: 1 + layer * 0.7,
+        alpha: 0.25 + layer * 0.25
+      });
+    }
+  }
+
+  // ================= UPDATE =================
+  function update(dt, dms, time) {
+    if (state === 'PAUSED') return; // 暂停时冻结一切更新
+    // 星空背景始终滚动
+    for (const s of stars) {
+      s.y += s.speed * dt;
+      if (s.y > H) { s.y = 0; s.x = rand(0, W); }
+    }
+
+    // 粒子始终衰减（让最后一次爆炸也能播完）
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= p.decay * dt;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    // 飘字始终上浮淡出
+    for (let i = floaters.length - 1; i >= 0; i--) {
+      const f = floaters[i];
+      f.y += f.vy * dt;
+      f.life -= 0.018 * dt;
+      if (f.life <= 0) floaters.splice(i, 1);
+    }
+
+    // 全屏闪光衰减（炸弹引爆用）
+    flashScreen = Math.max(0, flashScreen - 0.06 * dt);
+
+    // 受击震屏 / 红闪衰减
+    shake = Math.max(0, shake - 0.045 * dt);
+    hurtFlash = Math.max(0, hurtFlash - 0.045 * dt);
+
+    if (state !== 'PLAYING') return;
+
+    for (const p of players) p.update(dt, time);
+
+    // 用时累计（仅 PLAYING 态执行 → 暂停不计时）；连击窗口到期即断
+    runTime += dms;
+    if (combo > 0 && time >= comboUntil) combo = 0;
+
+    // 波次推进：存活足够时间进入下一波并提升难度
+    waveTimer += dms;
+    if (waveTimer >= CONFIG.wave.duration) {
+      waveTimer -= CONFIG.wave.duration;
+      wave++;
+      recomputeDiff();
+      floatText(W / 2, H / 2 - 60, '第 ' + wave + ' 波', '#7fb4ff');
+    }
+
+    // Boss 触发：达到分数门槛且当前无 Boss 时登场（型号按等级轮换）
+    if (!boss && score >= nextBossScore) {
+      boss = new Boss(bossLevel, BOSS_ORDER[(bossLevel - 1) % BOSS_ORDER.length]);
+      floatText(W / 2, 120, 'BOSS 来袭 · ' + boss.def.name, '#ff6b6b');
+      SFX.bossWarn();
+      setTrack(boss.type); // 切入该型号专属战斗曲
+    }
+    // Boss 更新
+    if (boss) boss.update(dt, time);
+
+    // 普通敌机生成（Boss 在场时暂停，专注 1v1；编队队列同样冻结）
+    if (!boss) {
+      formationCd = Math.max(0, formationCd - dms);
+      spawnAcc += dms;
+      if (spawnAcc >= DIFF.spawnInterval) {
+        spawnAcc -= DIFF.spawnInterval;
+        if (wave >= CONFIG.formation.minWave && pendingSpawns.length === 0 &&
+            formationCd <= 0 && Math.random() < CONFIG.formation.chance) {
+          queueFormation(); // 本点改出编队，成员将按各自延迟陆续入场
+          formationCd = CONFIG.formation.cooldown;
+        } else {
+          const type = pickEnemyType();
+          if (type === 'diver') spawnDiver(); // 自爆机走侧翼突入路线
+          else enemies.push(new Enemy(type));
+        }
+      }
+      // 编队成员到点入场
+      for (let i = pendingSpawns.length - 1; i >= 0; i--) {
+        const s = pendingSpawns[i];
+        s.delay -= dms;
+        if (s.delay <= 0) {
+          enemies.push(new Enemy(s.type, s));
+          pendingSpawns.splice(i, 1);
+        }
+      }
+    }
+
+    // 玩家子弹
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      b.update(dt);
+      if (b.y < -b.h || b.x < -b.w || b.x > W + b.w) bullets.splice(i, 1);
+    }
+
+    // 敌弹
+    for (let i = enemyBullets.length - 1; i >= 0; i--) {
+      const eb = enemyBullets[i];
+      eb.update(dt);
+      if (eb.y > H + 10 || eb.y < -10 || eb.x < -10 || eb.x > W + 10) enemyBullets.splice(i, 1);
+    }
+
+    // 敌机（侧向突入/俯冲漏过的会从左右穿出屏幕）
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const e = enemies[i];
+      e.update(dt, time);
+      if (e.y - e.h / 2 > H || (e.vx && (e.x < -70 || e.x > W + 70))) enemies.splice(i, 1);
+    }
+
+    // 碰撞：玩家子弹 vs Boss（每发命中都扣血）
+    if (boss) {
+      for (let j = bullets.length - 1; j >= 0; j--) {
+        const b = bullets[j];
+        if (hit(b, boss)) {
+          bullets.splice(j, 1);
+          boss.hp--;
+          boss.flash = 1;
+          explode(b.x, b.y, '#ffd9a0', 4);
+          if (boss.hp <= 0) { defeatBoss(); break; }
+        }
+      }
+    }
+
+    // 碰撞：玩家子弹 vs 敌机（伤害模型）
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const e = enemies[i];
+      for (let j = bullets.length - 1; j >= 0; j--) {
+        const b = bullets[j];
+        if (hit(b, e)) {
+          bullets.splice(j, 1);
+          e.hp--;
+          e.flash = 1;
+          if (e.hp <= 0) {
+            enemies.splice(i, 1);
+            explode(e.x, e.y, e.def.color, e.maxHp > 3 ? 24 : 14);
+            killScore(e.scoreVal, time, b.owner); // 连击结算（受倍率加成，击杀计入弹主贡献）
+            SFX.explode();
+            maybeDrop(e.x, e.y, e.maxHp > 3); // 击毁掉落（重型机概率更高）
+          } else {
+            explode(b.x, b.y, '#ffd9a0', 4); // 命中火花
+          }
+          break;
+        }
+      }
+    }
+
+    // 擦弹（双人版）：分别检查每机擦弹圈，攒槽共享、个人计擦弹数。
+    // 护盾/无敌期照常计——故意贴弹飞是高风险高回报玩法；正中判定核的弹不重复计数
+    for (const p of players) {
+      if (!p.alive) continue;
+      for (const eb of enemyBullets) {
+        if (eb.grazed || hit(eb, p)) continue;
+        if (Math.hypot(eb.x - p.x, eb.y - p.y) < CONFIG.graze.radius) {
+          eb.grazed = true;
+          grazeCount++;
+          p.statGrazes++;
+          addScore(CONFIG.graze.score);
+          explode(eb.x, eb.y, '#7fd0ff', 2);
+          if (time - grazeSfxAt > 90) { grazeSfxAt = time; SFX.graze(); }
+          // 擦弹攒槽：攒满奖励炸弹（满库存转奖励分）——奖励归完成第 30 擦的玩家
+          grazeAcc++;
+          if (grazeAcc >= CONFIG.graze.bombEvery) {
+            grazeAcc = 0;
+            if (p.bombs < CONFIG.skills.maxBombs) {
+              p.bombs++;
+              floatText(p.x, p.y - 34, 'P' + (p.idx + 1) + ' 擦弹满槽 炸弹 +1', '#7fd0ff');
+            } else {
+              addScore(CONFIG.powerup.bonusScore);
+              floatText(p.x, p.y - 34, 'P' + (p.idx + 1) + ' 擦弹满槽 +' + CONFIG.powerup.bonusScore, '#ffe066');
+            }
+            SFX.powerup();
+          }
+        }
+      }
+    }
+
+    // 碰撞：敌弹 / 敌机 / Boss 机体 vs 玩家（逐机检查；无敌帧或护盾期间不受击）
+    for (const p of players) {
+      if (!p.alive || time <= p.invincibleUntil || time <= p.shieldUntil) continue;
+      let hurt = false;
+      for (let i = enemyBullets.length - 1; i >= 0; i--) {
+        if (hit(enemyBullets[i], p)) {
+          enemyBullets.splice(i, 1);
+          damagePlayer(p, time);
+          hurt = true;
+          break;
+        }
+      }
+      if (hurt || state !== 'PLAYING') continue;
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        if (hit(enemies[i], p)) {
+          const e = enemies[i];
+          enemies.splice(i, 1);
+          explode(e.x, e.y, e.def.color, 20);
+          damagePlayer(p, time);
+          hurt = true;
+          break;
+        }
+      }
+      if (hurt || state !== 'PLAYING') continue;
+      if (boss && hit(boss, p)) damagePlayer(p, time);
+    }
+
+    // 火力道具：下落 + 拾取（双人版谁先碰到归谁，效果只作用于拾取者）
+    for (let i = powerups.length - 1; i >= 0; i--) {
+      const pu = powerups[i];
+      pu.update(dt);
+      if (pu.y - pu.h / 2 > H) { powerups.splice(i, 1); continue; }
+      // 拾取用宽松圆形判定（不受玩家小判定核影响），逐机检查
+      let picker = null;
+      for (const q of players) {
+        if (q.alive && Math.hypot(pu.x - q.x, pu.y - q.y) < 30) { picker = q; break; }
+      }
+      if (picker) {
+        powerups.splice(i, 1);
+        const d = pu.def;
+        const who = 'P' + (picker.idx + 1) + ' ';
+        if (pu.type === 'shield') {
+          picker.shieldUntil = time + CONFIG.skills.shieldDuration;
+          floatText(pu.x, pu.y - 10, who + '护盾!', d.glow);
+          SFX.shield();
+        } else if (pu.type === 'bomb') {
+          if (picker.bombs < CONFIG.skills.maxBombs) {
+            picker.bombs++;
+            floatText(pu.x, pu.y - 10, who + '炸弹 +1', d.glow);
+          } else {
+            addScore(CONFIG.powerup.bonusScore); // 满库存时转为奖励分（与满级吃 P 一致）
+            floatText(pu.x, pu.y - 10, '+' + CONFIG.powerup.bonusScore, '#ffe066');
+          }
+          SFX.powerup();
+        } else { // power
+          if (picker.power < CONFIG.player.maxPower) {
+            picker.power++;
+            floatText(pu.x, pu.y - 10, who + '火力 +1', '#ffd24a');
+          } else if (picker.options.length < CONFIG.option.maxCount) {
+            // 满级吃 P 优先转化僚机（先左后右），僚机满员才给奖励分
+            picker.options.push(new Option(picker.options.length === 0 ? -1 : 1, picker));
+            floatText(pu.x, pu.y - 10, who + '僚机 +1', '#7fd0ff');
+          } else {
+            addScore(CONFIG.powerup.bonusScore); // 满级满员时给予奖励分
+            floatText(pu.x, pu.y - 10, '+' + CONFIG.powerup.bonusScore, '#ffe066');
+          }
+          SFX.powerup();
+          picker.powerDecayAt = time + CONFIG.player.powerDecayInterval; // 拾取刷新衰减计时
+        }
+        explode(pu.x, pu.y, d.glow, 14);
+      }
+    }
+  }
+
+  // ================= RENDER =================
+  function render(time) {
+    // 背景渐变
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#0a0e27');
+    g.addColorStop(1, '#02030a');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    // 受击震屏：世界层整体随机偏移（背景与 HUD 不动，避免露出画布边缘）
+    ctx.save();
+    if (shake > 0) {
+      const amp = shake * CONFIG.player.hurtShake;
+      ctx.translate(rand(-1, 1) * amp, rand(-1, 1) * amp);
+    }
+
+    // 星空
+    ctx.fillStyle = '#ffffff';
+    for (const s of stars) {
+      ctx.globalAlpha = s.alpha;
+      ctx.fillRect(s.x, s.y, s.size, s.size);
+    }
+    ctx.globalAlpha = 1;
+
+    // 实体（菜单态不显示）
+    if (state !== 'MENU') {
+      for (const b of bullets) b.draw();
+      for (const eb of enemyBullets) eb.draw();
+      for (const pu of powerups) pu.draw(time);
+      for (const e of enemies) e.draw(time);
+      if (boss) boss.draw();
+      for (const p of players) p.draw(time);
+    }
+
+    // 粒子
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // 飘字
+    for (const f of floaters) {
+      ctx.globalAlpha = Math.max(0, f.life);
+      ctx.fillStyle = f.color;
+      ctx.font = 'bold 16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(f.text, f.x, f.y);
+    }
+    ctx.globalAlpha = 1;
+
+    // 炸弹全屏闪光（画大一点，震屏偏移时也能盖满全屏）
+    if (flashScreen > 0) {
+      const m = CONFIG.player.hurtShake + 2;
+      ctx.fillStyle = 'rgba(255,255,255,' + (flashScreen * 0.5) + ')';
+      ctx.fillRect(-m, -m, W + m * 2, H + m * 2);
+    }
+    ctx.restore(); // 结束震屏偏移
+
+    // 受击红闪（整屏覆盖，不随震屏平移）
+    if (hurtFlash > 0) {
+      ctx.fillStyle = 'rgba(255,60,60,' + (hurtFlash * 0.3) + ')';
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    if (state !== 'MENU') drawHUD(time);
+    if (state === 'PLAYING') drawBombButton();
+    if (boss) drawBossBar();
+    if (state === 'MENU') drawMenu();
+    if (state === 'GAMEOVER') drawGameOver();
+    if (state === 'PAUSED') drawPause();
+  }
+
+  function drawMiniShip(cx, cy, color) {
+    ctx.fillStyle = color || '#4aa3ff';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 7);
+    ctx.lineTo(cx - 6, cy + 6);
+    ctx.lineTo(cx + 6, cy + 6);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // 双人 HUD 个人面板（左右对称）：标签 / 火力 / 衰减条 / 炸弹库存 / 命数；坠毁后置灰
+  function drawPlayerPanel(idx, time) {
+    const p = players[idx];
+    const left = idx === 0;
+    const ax = left ? 14 : W - 14;
+    ctx.textAlign = left ? 'left' : 'right';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = p.alive ? p.skin.body : '#555f70';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText(p.alive ? (idx === 0 ? 'P1 键盘' : 'P2 鼠标') : 'P' + (idx + 1) + ' 坠毁', ax, 12);
+    if (p.alive) {
+      ctx.fillStyle = '#ffd24a';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillText('火力 ' + p.power + '/' + CONFIG.player.maxPower, ax, 32);
+      // 火力衰减条：剩余时间越少越红，提示赶紧拾取道具
+      if (p.power > 1) {
+        const remain = Math.max(0, (p.powerDecayAt - time) / CONFIG.player.powerDecayInterval);
+        const bw = 72, bh = 4, bx = left ? 14 : W - 14 - 72, by = 50;
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.fillStyle = remain > 0.4 ? '#ffd24a' : '#ff5a4a';
+        if (left) ctx.fillRect(bx, by, bw * remain, bh);
+        else ctx.fillRect(bx + bw * (1 - remain), by, bw * remain, bh);
+      }
+      ctx.fillStyle = '#ffb066';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillText('炸弹 ' + p.bombs, ax, 62);
+      for (let i = 0; i < p.lives; i++) {
+        drawMiniShip(left ? ax + 8 + i * 22 : ax - 8 - i * 22, 78, p.skin.body);
+      }
+    }
+    ctx.textAlign = 'left';
+  }
+
+  function drawHUD(time) {
+    ctx.textBaseline = 'top';
+    // 共享信息（顶部居中）：总分 + 波次
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('得分 ' + score, W / 2, 12);
+    ctx.fillStyle = '#9fd0ff';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('第 ' + wave + ' 波', W / 2, 36);
+
+    // 连击（共享，波次下方）：计数 + 剩余时间条，封顶变橙提示 MAX
+    if (combo > 0) {
+      const capped = combo >= CONFIG.combo.maxCount;
+      ctx.fillStyle = capped ? '#ff8a5c' : '#cfe2ff';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText('连击 ×' + (capped ? CONFIG.combo.maxCount + ' MAX' : combo), W / 2, 56);
+      const remain = Math.max(0, (comboUntil - time) / CONFIG.combo.window);
+      const bx = W / 2 - 36, by = 76, bw = 72, bh = 4;
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.fillStyle = remain > 0.4 ? (capped ? '#ff8a5c' : '#cfe2ff') : '#ff5a4a';
+      ctx.fillRect(bx + bw * (1 - remain), by, bw * remain, bh);
+    }
+
+    // 两侧个人面板
+    drawPlayerPanel(0, time);
+    drawPlayerPanel(1, time);
+
+    // 静音指示
+    if (!audioEnabled) {
+      ctx.fillStyle = '#8aa0c8';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('静音 (M)', 14, H - 12);
+    }
+  }
+
+  // Boss 血条（仅 Boss 在场时绘制）
+  function drawBossBar() {
+    const bw = W - 60, bh = 12, bx = 30, by = 80;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(bx - 2, by - 2, bw + 4, bh + 4);
+    const r = Math.max(0, boss.hp / boss.maxHp);
+    ctx.fillStyle = r > 0.5 ? '#e0524a' : r > 0.25 ? '#ff9a3b' : '#ff3b3b';
+    ctx.fillRect(bx, by, bw * r, bh);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(boss.def.name + ' Lv.' + boss.level, bx, by - 3);
+  }
+
+  // 右下角炸弹按钮（双人版归属 P2 鼠标位：显示其库存，左键点击释放；P1 用 Space/X）
+  function drawBombButton() {
+    const bp = players[1];
+    const has = bp && bp.alive && bp.bombs > 0;
+    ctx.save();
+    ctx.globalAlpha = has ? 0.9 : 0.3;
+    ctx.fillStyle = 'rgba(255,122,59,0.22)';
+    ctx.beginPath(); ctx.arc(BOMB_BTN.x, BOMB_BTN.y, BOMB_BTN.r, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = has ? '#ffb066' : '#553a30';
+    ctx.stroke();
+    ctx.fillStyle = has ? '#ffe2cc' : '#7a5a4a';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('B', BOMB_BTN.x, BOMB_BTN.y - 5);
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('×' + (bp ? bp.bombs : 0), BOMB_BTN.x, BOMB_BTN.y + 12);
+    ctx.restore();
+
+    // 擦弹攒槽进度：环绕炸弹按钮的青色圆弧（攒满的奖励就是炸弹，进度与奖励同处）
+    if (grazeAcc > 0) {
+      ctx.strokeStyle = '#7fd0ff';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(BOMB_BTN.x, BOMB_BTN.y, BOMB_BTN.r + 4,
+        -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (grazeAcc / CONFIG.graze.bombEvery));
+      ctx.stroke();
+    }
+  }
+
+  function drawMenu() {
+    ctx.fillStyle = 'rgba(2, 3, 10, 0.55)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#7fb4ff';
+    ctx.font = 'bold 44px sans-serif';
+    ctx.fillText('飞机大战 · 双人版', W / 2, H / 2 - 96);
+    ctx.fillStyle = '#cfe2ff';
+    ctx.font = '17px sans-serif';
+    ctx.fillText('P1 键盘：方向键 / WASD 移动 · Space / X 炸弹', W / 2, H / 2 - 38);
+    ctx.fillText('P2 鼠标：移动跟随 · 左键炸弹', W / 2, H / 2 - 12);
+    ctx.fillStyle = '#8aa0c8';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('双人版需在电脑上游玩 · 双机自动开火 · 道具谁碰到归谁', W / 2, H / 2 + 16);
+    ctx.fillText('分数/连击全队共享 · 生命各 3 条 · 敌机瞄准最近的玩家', W / 2, H / 2 + 38);
+    ctx.fillStyle = '#ffe066';
+    ctx.font = 'bold 17px sans-serif';
+    if (highScore > 0) ctx.fillText('最高分 ' + highScore, W / 2, H / 2 + 68);
+    ctx.fillStyle = '#cfe2ff';
+    ctx.font = '17px sans-serif';
+    ctx.fillText('点击屏幕 / 按任意键开始 · M 静音 · P/Esc 暂停', W / 2, H / 2 + 100);
+  }
+
+  function drawGameOver() {
+    ctx.fillStyle = 'rgba(2, 3, 10, 0.62)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ff6b6b';
+    ctx.font = 'bold 46px sans-serif';
+    ctx.fillText('游戏结束', W / 2, H / 2 - 88);
+    ctx.fillStyle = '#ffe066';
+    ctx.font = 'bold 26px sans-serif';
+    ctx.fillText('得分 ' + score, W / 2, H / 2 - 38);
+    // 个人贡献（合作冲分 + 轻度比贡献）
+    ctx.font = '14px sans-serif';
+    for (let i = 0; i < 2; i++) {
+      const p = players[i];
+      ctx.fillStyle = p.skin.body;
+      ctx.fillText('P' + (i + 1) + (p.alive ? '' : '（坠毁）') + '：击破 ' + p.statKills + ' · 擦弹 ' + p.statGrazes,
+        W / 2, H / 2 - 6 + i * 22);
+    }
+    // 共享统计
+    const t = Math.floor(runTime / 1000);
+    const clock = Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+    ctx.fillStyle = '#8aa0c8';
+    ctx.fillText('最大连击 ×' + maxCombo + ' · 总击破 ' + killCount + ' · 用时 ' + clock, W / 2, H / 2 + 46);
+    ctx.fillStyle = '#cfe2ff';
+    ctx.font = '17px sans-serif';
+    ctx.fillText('最高分 ' + highScore, W / 2, H / 2 + 74);
+    if (newRecord) {
+      ctx.fillStyle = '#7CFC00';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText('★ 新纪录！★', W / 2, H / 2 + 100);
+    }
+    ctx.fillStyle = '#cfe2ff';
+    ctx.font = '17px sans-serif';
+    ctx.fillText('点击 / 按任意键重新开始', W / 2, H / 2 + 126);
+  }
+
+  function drawPause() {
+    ctx.fillStyle = 'rgba(2, 3, 10, 0.55)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#7fb4ff';
+    ctx.font = 'bold 48px sans-serif';
+    ctx.fillText('暂停', W / 2, H / 2 - 18);
+    ctx.fillStyle = '#cfe2ff';
+    ctx.font = '17px sans-serif';
+    ctx.fillText('按 P / Esc 继续', W / 2, H / 2 + 24);
+  }
+
+  // ================= LOOP =================
+  function loop(t) {
+    if (!lastTime) lastTime = t;
+    let dms = t - lastTime;
+    lastTime = t;
+    if (dms > 50) dms = 50;          // 切后台回来时夹紧，避免大跳变
+    const dt = dms / (1000 / 60);     // 归一化到 60fps 帧数
+
+    update(dt, dms, t);
+    render(t);
+
+    requestAnimationFrame(loop);
+  }
+
+  // ================= INIT =================
+  initStars();
+  loadHighScore();
+  reset(); // 让菜单态也有干净的实体引用（reset 内会 recomputeDiff）
+  requestAnimationFrame(loop);
+})();

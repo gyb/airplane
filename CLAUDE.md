@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-竖屏卷轴射击游戏（飞机大战），HTML5 Canvas + 原生 JavaScript 实现。无框架、无构建步骤、无 npm 依赖、无外部资源（图形全部用 Canvas 路径绘制，音效全部用 WebAudio 合成）。仓库仅三个源文件：`index.html`（页面骨架 + canvas）、`style.css`(居中/响应式缩放/触摸)、`game.js`（全部游戏逻辑）。
+竖屏卷轴射击游戏（飞机大战），HTML5 Canvas + 原生 JavaScript 实现。无框架、无构建步骤、无 npm 依赖、无外部资源（图形全部用 Canvas 路径绘制，音效全部用 WebAudio 合成）。源文件：`index.html`（页面骨架 + canvas）、`style.css`（居中/响应式缩放/触摸）、`game.js`（单人版全部逻辑）、`two-player/`（双人版：fork 自 game.js 的独立副本，`index.html` + `game.js`，引用 `../style.css`）。
+
+**双人版与单人版是平行 fork，不共享代码**：单人版的改动（新内容/调平衡）需手动同步到 `two-player/game.js`。双人版要点：P1 键盘 + P2 鼠标；`players[]` 数组 + `nearestPlayer()` 瞄准；分数/连击/擦弹攒槽共享（`killScore` 带 owner 计个人贡献）；生命各 3 条全灭才结束；道具谁碰到归谁；独立高分榜（`airplane_highscore_2p`）；刷怪密度乘 `CONFIG.duo.spawnMul` 补偿；不支持触屏。
 
 注释、UI 文案、README、commit message 均使用简体中文，请保持一致。`README.en.md` 是 `README.md` 的英文版，修改 README 内容时同步更新。
 

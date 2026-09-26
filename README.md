@@ -6,7 +6,24 @@
 
 ![游戏截图](docs/screenshot.png)
 
-🎮 在线试玩：<https://gyb.github.io/airplane/>
+🎮 在线试玩：<https://gyb.github.io/airplane/> · [双人版（仅电脑）](two-player/)
+
+---
+
+## 👥 双人版（仅电脑）
+
+[在线试玩](two-player/) · 本地打开 `two-player/index.html`
+
+在单人版基础上 fork 的双人合作变体（`two-player/game.js` 独立副本，与单人版互不影响）：
+
+- **P1 键盘**：方向键 / WASD 移动，`Space` / `X` 炸弹（蓝色机）
+- **P2 鼠标**：移动跟随，左键炸弹（银白机）
+- 双机自动开火、无友军伤害；**敌机与 Boss 瞄准距离最近的玩家**，自爆机随机锁定一人
+- **道具谁碰到归谁**：火力 / 僚机 / 炸弹库存 / 护盾各自独立——抢道具即乐趣
+- **分数 / 连击 / 擦弹攒槽全队共享**（任一人中弹连击即断），结算页分开统计两人击破与擦弹
+- **生命各 3 条**：一机坠毁后另一机继续，全灭才结束
+- 刷怪密度按双倍火力补偿性上调（`CONFIG.duo.spawnMul`）；最高分为独立榜单（不与单人版混算）
+- 双人版不支持触屏；单人版后续更新需手动同步至此副本
 
 ---
 
@@ -96,7 +113,10 @@ python3 -m http.server 8000
 airplane/
 ├── index.html   # 页面骨架 + <canvas>
 ├── style.css    # 居中布局、响应式缩放、触摸手势处理
-└── game.js      # 全部游戏逻辑
+├── game.js      # 全部游戏逻辑（单人版）
+└── two-player/  # 双人版（fork 自 game.js 的独立副本）
+    ├── index.html
+    └── game.js
 ```
 
 `game.js` 内部分区清晰，便于阅读和扩展：

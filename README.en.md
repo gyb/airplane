@@ -6,7 +6,24 @@ A vertical-scrolling shoot-'em-up built from scratch with **HTML5 Canvas + vanil
 
 ![Screenshot](docs/screenshot.png)
 
-🎮 **Play online:** <https://gyb.github.io/airplane/>
+🎮 **Play online:** <https://gyb.github.io/airplane/> · [Two-player (desktop only)](two-player/)
+
+---
+
+## 👥 Two-Player Mode (desktop only)
+
+[Play online](two-player/) · open `two-player/index.html` locally
+
+A two-player co-op fork of the single-player game (`two-player/game.js` is an independent copy — the single-player version is untouched):
+
+- **P1 keyboard**: arrows / WASD to move, `Space` / `X` to bomb (blue ship)
+- **P2 mouse**: pointer-follow movement, left-click to bomb (silver ship)
+- Both ships auto-fire with no friendly fire; **enemies and bosses target the nearest player**, divers lock onto one at random
+- **Pickups go to whoever touches them**: power / wingmen / bombs / shields are per-player — racing for drops is half the fun
+- **Score / combo / graze charge are shared** (the combo breaks when either player is hit); the results screen breaks out each player's kills and grazes
+- **3 lives each**: when one ship goes down the other continues; the run ends when both are out
+- Spawn density is compensated for doubled firepower (`CONFIG.duo.spawnMul`); the high score board is separate from single-player
+- Touch is not supported in two-player mode; future single-player updates must be ported to this copy manually
 
 ---
 
@@ -96,7 +113,10 @@ Design note: **movement and bombing are decoupled** — on mouse ("move = positi
 airplane/
 ├── index.html   # page skeleton + <canvas>
 ├── style.css    # centered layout, responsive scaling, touch handling
-└── game.js      # all game logic
+├── game.js      # all game logic (single-player)
+└── two-player/  # two-player mode (an independent fork of game.js)
+    ├── index.html
+    └── game.js
 ```
 
 `game.js` is organized into clear sections for readability and extension:
