@@ -236,9 +236,10 @@
            Math.abs(a.y - b.y) < (ah + bh) / 2;
   }
 
-  // 右下角炸弹按钮区域（供鼠标 / 触摸点击释放炸弹）
-  const BOMB_BTN = { x: W - 46, y: H - 46, r: 32 };
-  function inBombButton(x, y) { return Math.hypot(x - BOMB_BTN.x, y - BOMB_BTN.y) < BOMB_BTN.r; }
+  // 左右下角炸弹显示区：左下 = P1 键盘位 / 右下 = P2 鼠标位。
+  // 两者均为信息展示（P1 用 Space/X 放弹，P2 左键任意位置放弹），不做点击判定。
+  const P1_BTN = { x: 46, y: H - 46, r: 28 };
+  const P2_BTN = { x: W - 46, y: H - 46, r: 28 };
 
   // 环形弹幕：从 (x,y) 以基准角 base 整圈发射 n 发（悬浮炮 / 环堡 Boss 共用）
   function ringBurst(x, y, n, base) {
@@ -564,7 +565,7 @@
       tryStart();
       return;
     }
-    useBomb(1); // 游戏中：鼠标左键任意位置（含右下炸弹按钮）= P2 释放炸弹
+    useBomb(1); // 游戏中：鼠标左键任意位置 = P2 释放炸弹（库存显示在右下角标）
   });
 
   // ================= STATE =================
@@ -1006,9 +1007,9 @@
     }
 
     update(dt) {
-      // 向目标点插值：快移时略微拖后，形成"编队感"
+      // 向目标点插值：快移时略微拖后，形成"编队感"（左右僚机同高，仅水平镜像）
       const tx = this.host.x + this.side * CONFIG.option.offsetX;
-      const ty = this.host.y + this.side * CONFIG.option.offsetY;
+      const ty = this.host.y + CONFIG.option.offsetY;
       this.x += (tx - this.x) * CONFIG.option.followEase * dt;
       this.y += (ty - this.y) * CONFIG.option.followEase * dt;
     }
@@ -1927,11 +1928,9 @@
         if (left) ctx.fillRect(bx, by, bw * remain, bh);
         else ctx.fillRect(bx + bw * (1 - remain), by, bw * remain, bh);
       }
-      ctx.fillStyle = '#ffb066';
-      ctx.font = 'bold 13px sans-serif';
-      ctx.fillText('炸弹 ' + p.bombs, ax, 62);
+      // 命数小飞机（炸弹库存移至左右下角的玩家角标显示，避免三处重复）
       for (let i = 0; i < p.lives; i++) {
-        drawMiniShip(left ? ax + 8 + i * 22 : ax - 8 - i * 22, 78, p.skin.body);
+        drawMiniShip(left ? ax + 8 + i * 22 : ax - 8 - i * 22, 64, p.skin.body);
       }
     }
     ctx.textAlign = 'left';
@@ -1991,32 +1990,37 @@
     ctx.fillText(boss.def.name + ' Lv.' + boss.level, bx, by - 3);
   }
 
-  // 右下角炸弹按钮（双人版归属 P2 鼠标位：显示其库存，左键点击释放；P1 用 Space/X）
+  // 左下 = P1 / 右下 = P2 的炸弹库存显示；擦弹攒槽为全队共享进度，环绕两角同步显示
   function drawBombButton() {
-    const bp = players[1];
-    const has = bp && bp.alive && bp.bombs > 0;
+    drawBombIndicator(0, P1_BTN);
+    drawBombIndicator(1, P2_BTN);
+  }
+
+  function drawBombIndicator(idx, btn) {
+    const p = players[idx];
+    const has = p.alive && p.bombs > 0;
     ctx.save();
     ctx.globalAlpha = has ? 0.9 : 0.3;
     ctx.fillStyle = 'rgba(255,122,59,0.22)';
-    ctx.beginPath(); ctx.arc(BOMB_BTN.x, BOMB_BTN.y, BOMB_BTN.r, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(btn.x, btn.y, btn.r, 0, Math.PI * 2); ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = has ? '#ffb066' : '#553a30';
     ctx.stroke();
     ctx.fillStyle = has ? '#ffe2cc' : '#7a5a4a';
-    ctx.font = 'bold 18px sans-serif';
+    ctx.font = 'bold 15px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('B', BOMB_BTN.x, BOMB_BTN.y - 5);
+    ctx.fillText('P' + (idx + 1), btn.x, btn.y - 6);
     ctx.font = 'bold 12px sans-serif';
-    ctx.fillText('×' + (bp ? bp.bombs : 0), BOMB_BTN.x, BOMB_BTN.y + 12);
+    ctx.fillText('炸×' + p.bombs, btn.x, btn.y + 11);
     ctx.restore();
 
-    // 擦弹攒槽进度：环绕炸弹按钮的青色圆弧（攒满的奖励就是炸弹，进度与奖励同处）
+    // 擦弹攒槽进度（共享）：环绕两角的青色圆弧，攒满的奖励就是炸弹
     if (grazeAcc > 0) {
       ctx.strokeStyle = '#7fd0ff';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.arc(BOMB_BTN.x, BOMB_BTN.y, BOMB_BTN.r + 4,
+      ctx.arc(btn.x, btn.y, btn.r + 4,
         -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (grazeAcc / CONFIG.graze.bombEvery));
       ctx.stroke();
     }
