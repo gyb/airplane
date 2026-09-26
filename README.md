@@ -6,13 +6,13 @@
 
 ![游戏截图](docs/screenshot.png)
 
-🎮 在线试玩：<https://gyb.github.io/airplane/> · [双人版（仅电脑）](two-player/)
+🎮 在线试玩：<https://gyb.github.io/airplane/> · [双人版（仅电脑）](https://gyb.github.io/airplane/two-player/)
 
 ---
 
 ## 👥 双人版（仅电脑）
 
-[在线试玩](two-player/) · 本地打开 `two-player/index.html`
+[在线试玩](https://gyb.github.io/airplane/two-player/) · 本地打开 `two-player/index.html`
 
 在单人版基础上 fork 的双人合作变体（`two-player/game.js` 独立副本，与单人版互不影响）：
 

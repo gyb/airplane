@@ -6,13 +6,13 @@ A vertical-scrolling shoot-'em-up built from scratch with **HTML5 Canvas + vanil
 
 ![Screenshot](docs/screenshot.png)
 
-🎮 **Play online:** <https://gyb.github.io/airplane/> · [Two-player (desktop only)](two-player/)
+🎮 **Play online:** <https://gyb.github.io/airplane/> · [Two-player (desktop only)](https://gyb.github.io/airplane/two-player/)
 
 ---
 
 ## 👥 Two-Player Mode (desktop only)
 
-[Play online](two-player/) · open `two-player/index.html` locally
+[Play online](https://gyb.github.io/airplane/two-player/) · open `two-player/index.html` locally
 
 A two-player co-op fork of the single-player game (`two-player/game.js` is an independent copy — the single-player version is untouched):
 
